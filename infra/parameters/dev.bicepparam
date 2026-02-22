@@ -26,3 +26,4 @@ param storageSku = 'Standard_LRS'
 
 // Key Vault Configuration
 param keyVaultEnablePurgeProtection = false
+param logAnalyticsRetentionInDays = 30

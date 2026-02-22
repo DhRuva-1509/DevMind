@@ -59,9 +59,14 @@ KEY VAULT PARAMETERS
 */
 @description('Enable purge protection for Key Vault')
 param keyVaultEnablePurgeProtection bool
+
 /*
+LOG ANALYTICS PARAMETERS
+*/
+@description('Log Analytics retention in days')
+param logAnalyticsRetentionInDays int
 
-
+/*
 VARIABLES
 */
 var openAiName = 'oai-${baseName}-${environment}'
@@ -69,6 +74,9 @@ var searchName = 'srch-${baseName}-${environment}'
 var cosmosDbName = 'cosmos-${baseName}-${environment}'
 var storageName = 'st${replace(baseName, '-', '')}${environment}'
 var keyVaultName = 'kv-${baseName}-${environment}'
+var logAnalyticsName = 'log-${baseName}-${environment}'
+var appInsightsName = 'appi-${baseName}-${environment}'
+
 
 /*
 MODULES
@@ -140,7 +148,7 @@ module cosmoDb 'modules/cosmos-db.bicep' = {
       {
         name: 'cost-tracking'
         partitionKey: '/date'
-        ttl: 7776000 // 90 days in seconds
+        ttl: 7776000
       }
     ]
   }
@@ -166,6 +174,27 @@ module keyVault 'modules/key-vault.bicep' = {
   }
 }
 
+module logAnalytics 'modules/log-analytics.bicep' = { 
+  name: 'logAnalytics'
+  params: { 
+    name: logAnalyticsName
+    location: location
+    tags: tags
+    sku: 'PerGB2018'
+    retentionInDays: logAnalyticsRetentionInDays
+  }
+}
+
+module appInsights 'modules/app-insights.bicep' = {
+  name: 'appInsights'
+  params: {
+    name: appInsightsName
+    location: location
+    tags: tags
+    logAnalyticsWorkspaceId: logAnalytics.outputs.id
+  }
+}
+
 output openAiEndpoint string = openAi.outputs.endpoint
 output openAiName string = openAi.outputs.name
 output searchEndpoint string = search.outputs.endpoint
@@ -176,3 +205,5 @@ output storageBlobEndpoint string = storage.outputs.blobEndpoint
 output storageName string = storage.outputs.name
 output keyVaultUri string = keyVault.outputs.uri
 output keyVaultName string = keyVault.outputs.name
+output logAnalyticsId string = logAnalytics.outputs.id
+output appInsightsConnectionString string = appInsights.outputs.connectionString
