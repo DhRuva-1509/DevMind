@@ -53,13 +53,22 @@ STORAGE PARAMETERS
 @allowed(['Standard_LRS', 'Standard_GRS', 'Standard_ZRS', 'Premium_LRS'])
 param storageSku string
 
+
 /*
+KEY VAULT PARAMETERS
+*/
+@description('Enable purge protection for Key Vault')
+param keyVaultEnablePurgeProtection bool
+/*
+
+
 VARIABLES
 */
 var openAiName = 'oai-${baseName}-${environment}'
 var searchName = 'srch-${baseName}-${environment}'
 var cosmosDbName = 'cosmos-${baseName}-${environment}'
 var storageName = 'st${replace(baseName, '-', '')}${environment}'
+var keyVaultName = 'kv-${baseName}-${environment}'
 
 /*
 MODULES
@@ -147,6 +156,16 @@ module storage 'modules/storage.bicep' = {
   }
 }
 
+module keyVault 'modules/key-vault.bicep' = { 
+  name: 'keyVault'
+  params: { 
+    name: keyVaultName
+    location: location
+    tags: tags
+    enablePurgeProtection: keyVaultEnablePurgeProtection
+  }
+}
+
 output openAiEndpoint string = openAi.outputs.endpoint
 output openAiName string = openAi.outputs.name
 output searchEndpoint string = search.outputs.endpoint
@@ -155,3 +174,5 @@ output cosmosDbEndpoint string = cosmoDb.outputs.endpoint
 output cosmosDbName string = cosmoDb.outputs.name
 output storageBlobEndpoint string = storage.outputs.blobEndpoint
 output storageName string = storage.outputs.name
+output keyVaultUri string = keyVault.outputs.uri
+output keyVaultName string = keyVault.outputs.name

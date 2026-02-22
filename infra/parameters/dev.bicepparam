@@ -23,3 +23,6 @@ param cosmosDbDatabaseName = 'devmind-db'
 
 //Storage Configuration
 param storageSku = 'Standard_LRS'
+
+// Key Vault Configuration
+param keyVaultEnablePurgeProtection = false
