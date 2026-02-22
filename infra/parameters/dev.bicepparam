@@ -20,3 +20,6 @@ param searchReplicaCount = 1
 
 //Cosmos DB Configuration
 param cosmosDbDatabaseName = 'devmind-db'
+
+//Storage Configuration
+param storageSku = 'Standard_LRS'

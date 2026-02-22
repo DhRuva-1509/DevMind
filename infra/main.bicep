@@ -47,11 +47,19 @@ param cosmosDbDatabaseName string
 
 
 /*
+STORAGE PARAMETERS
+*/
+@description('Storage SKU')
+@allowed(['Standard_LRS', 'Standard_GRS', 'Standard_ZRS', 'Premium_LRS'])
+param storageSku string
+
+/*
 VARIABLES
 */
 var openAiName = 'oai-${baseName}-${environment}'
 var searchName = 'srch-${baseName}-${environment}'
 var cosmosDbName = 'cosmos-${baseName}-${environment}'
+var storageName = 'st${replace(baseName, '-', '')}${environment}'
 
 /*
 MODULES
@@ -129,9 +137,21 @@ module cosmoDb 'modules/cosmos-db.bicep' = {
   }
 }
 
+module storage 'modules/storage.bicep' = {
+  name: 'storage'
+  params: {
+    name: storageName
+    location: location
+    tags: tags
+    sku: storageSku
+  }
+}
+
 output openAiEndpoint string = openAi.outputs.endpoint
 output openAiName string = openAi.outputs.name
 output searchEndpoint string = search.outputs.endpoint
 output searchName string = search.outputs.name
 output cosmosDbEndpoint string = cosmoDb.outputs.endpoint
 output cosmosDbName string = cosmoDb.outputs.name
+output storageBlobEndpoint string = storage.outputs.blobEndpoint
+output storageName string = storage.outputs.name
