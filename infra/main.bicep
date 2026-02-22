@@ -40,11 +40,18 @@ param searchReplicaCount int
 param searchPartitionCount int
 
 /*
+COSMOS DB PARAMETERS
+*/
+@description('Cosmos DB database name')
+param cosmosDbDatabaseName string
+
+
+/*
 VARIABLES
 */
 var openAiName = 'oai-${baseName}-${environment}'
 var searchName = 'srch-${baseName}-${environment}'
-
+var cosmosDbName = 'cosmos-${baseName}-${environment}'
 
 /*
 MODULES
@@ -90,5 +97,41 @@ module search 'modules/ai-search.bicep' = {
   }
 }
 
+module cosmoDb 'modules/cosmos-db.bicep' = {
+  name: 'cosmosDb'
+  params: { 
+    name: cosmosDbName
+    location: location
+    tags: tags
+    databaseName: cosmosDbDatabaseName
+    containers: [
+      {
+        name: 'telemetry'
+        partitionKey: '/agentName'
+        ttl: 2592000 // 30 days in seconds
+      }
+      {
+        name: 'sessions'
+        partitionKey: '/userId'
+        ttl: 604800 // 7 days in seconds
+      }
+      {
+        name: 'pr-comments'
+        partitionKey: '/repositoryId'
+        ttl: -1
+      }
+      {
+        name: 'cost-tracking'
+        partitionKey: '/date'
+        ttl: 7776000 // 90 days in seconds
+      }
+    ]
+  }
+}
+
 output openAiEndpoint string = openAi.outputs.endpoint
 output openAiName string = openAi.outputs.name
+output searchEndpoint string = search.outputs.endpoint
+output searchName string = search.outputs.name
+output cosmosDbEndpoint string = cosmoDb.outputs.endpoint
+output cosmosDbName string = cosmoDb.outputs.name

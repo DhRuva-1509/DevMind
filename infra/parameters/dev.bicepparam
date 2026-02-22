@@ -17,3 +17,6 @@ param embeddingCapacity = 120
 param searchSku = 'basic'
 param searchPartitionCount = 1
 param searchReplicaCount = 1
+
+//Cosmos DB Configuration
+param cosmosDbDatabaseName = 'devmind-db'
