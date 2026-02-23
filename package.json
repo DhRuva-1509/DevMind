@@ -23,7 +23,7 @@
     ]
   },
   "scripts": {
-   "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
@@ -31,22 +31,31 @@
     "lint:fix": "eslint src --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "test": "vscode-test"
+    "test": "mocha",
+    "test:unit": "mocha 'src/services/**/*.test.ts'",
+    "test:vscode": "vscode-test"
   },
   "devDependencies": {
+    "@types/chai": "^4.3.20",
     "@types/mocha": "^10.0.10",
-    "@types/node": "22.x",
+    "@types/node": "^22.19.11",
+    "@types/sinon": "^21.0.0",
     "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "chai": "^4.5.0",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
+    "mocha": "^11.7.5",
     "prettier": "^3.8.1",
+    "sinon": "^21.0.1",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0"
   },
   "dependencies": {
+    "@azure/core-auth": "^1.10.1",
     "@azure/cosmos": "^4.9.1",
     "@azure/identity": "^4.13.0",
     "@azure/keyvault-secrets": "^4.10.0",
