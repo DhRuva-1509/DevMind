@@ -60,10 +60,11 @@
     "@azure/identity": "^4.13.0",
     "@azure/keyvault-secrets": "^4.10.0",
     "@azure/monitor-opentelemetry": "^1.15.1",
-    "@azure/openai": "^2.0.0",
     "@azure/search-documents": "^12.2.0",
     "@azure/storage-blob": "^12.31.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "axios": "^1.13.5"
+    "axios": "^1.13.5",
+    "openai": "^6.25.0",
+    "tiktoken": "^1.0.22"
   }
 }
