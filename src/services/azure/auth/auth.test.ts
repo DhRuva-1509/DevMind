@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { AzureAuthService } from './auth.service';
-import { AzureScopes, AuthErrorCode } from './azure.types';
+import { AzureScopes, AuthErrorCode } from '../auth/auth.types';
 
 describe('AzureAuthService', () => {
   let authService: AzureAuthService;

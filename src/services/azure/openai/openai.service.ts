@@ -1,7 +1,7 @@
 // src/services/azure/openai.service.ts
 
 import OpenAI, { AzureOpenAI } from 'openai';
-import { azureAuthService } from './auth.service';
+import { azureAuthService } from '../auth/auth.service';
 import {
   OpenAIConfig,
   ChatMessage,

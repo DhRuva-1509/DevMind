@@ -2,7 +2,7 @@
 
 import { SecretClient, KeyVaultSecret } from '@azure/keyvault-secrets';
 import { TokenCredential } from '@azure/core-auth';
-import { azureAuthService } from './auth.service';
+import { azureAuthService } from '../auth/auth.service';
 import {
   KeyVaultConfig,
   CachedSecret,
