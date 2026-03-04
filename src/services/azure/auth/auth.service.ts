@@ -13,7 +13,7 @@ import {
   AuthErrorCode,
   AzureScope,
   AzureScopes,
-} from './azure.types';
+} from '../auth/auth.types';
 
 /**
  * Azure Authentication Service
