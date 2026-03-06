@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
-import { CosmosDBService } from '../cosmos/cosmos.services';
+import { CosmosDBService } from './cosmos.service';
 import { CosmosErrorCode, ContainerConfigs, BaseEntity } from './cosmos.types';
 
 describe('CosmosDBService', () => {
