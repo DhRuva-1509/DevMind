@@ -23,3 +23,7 @@ export * from './cosmos/cosmos.types';
 // Blob Storage Service
 export { BlobStorageService, blobStorageService } from './blob/blob.service';
 export * from './blob/blob.types';
+
+// Foundry MCP Client
+export { FoundryMCPClient, foundryMCPClient } from './foundry/foundry.service';
+export * from './foundry/foundry.types';
