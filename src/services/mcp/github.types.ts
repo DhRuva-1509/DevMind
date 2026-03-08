@@ -100,7 +100,7 @@ export class GitHubMCPError extends Error {
 export class GitHubRateLimitError extends GitHubMCPError {
   constructor(public readonly resetAt: Date) {
     super(`GitHub rate limit exceeded. Resets at ${resetAt.toISOString()}`, 429);
-    this.name = 'GitHubRateLimitError';
+    this.name = 'GitHubRateLimitError'; 
   }
 }
 
