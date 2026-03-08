@@ -38,7 +38,7 @@
   "devDependencies": {
     "@types/chai": "^4.3.20",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.19.11",
+    "@types/node": "^22.19.15",
     "@types/sinon": "^21.0.0",
     "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
@@ -64,6 +64,8 @@
     "@azure/search-documents": "^12.2.0",
     "@azure/storage-blob": "^12.31.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@octokit/request-error": "^3.0.3",
+    "@octokit/rest": "^18.12.0",
     "axios": "^1.13.5",
     "openai": "^6.25.0",
     "tiktoken": "^1.0.22"
