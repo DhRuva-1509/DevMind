@@ -1,7 +1,3 @@
-// ─────────────────────────────────────────────────────────────
-// GitHub MCP Client
-// TICKET-06 | DevMind – GitHub MCP Client
-// ─────────────────────────────────────────────────────────────
 
 import { Octokit } from '@octokit/rest';
 import { RequestError } from '@octokit/request-error';

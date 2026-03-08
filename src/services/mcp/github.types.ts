@@ -1,23 +1,12 @@
-// ─────────────────────────────────────────────────────────────
-// GitHub MCP Types
-// TICKET-06 | DevMind – GitHub MCP Client
-// ─────────────────────────────────────────────────────────────
-
 export type GitHubAuthType = 'pat' | 'oauth';
 
 export interface GitHubMCPConfig {
-  /** Personal Access Token – resolved from Key Vault at runtime */
   token: string;
   authType?: GitHubAuthType;
-  /** Requests per hour ceiling before proactive back-off (default: 4500) */
   rateLimitThreshold?: number;
-  /** Maximum retries on transient / rate-limit errors (default: 3) */
   maxRetries?: number;
-  /** Base delay (ms) for exponential back-off (default: 1000) */
   retryBaseDelayMs?: number;
 }
-
-// ── Pull Requests ─────────────────────────────────────────────
 
 export interface GitHubPR {
   number: number;
@@ -51,21 +40,17 @@ export interface GitHubPRDiff {
   files: GitHubPRDiffFile[];
 }
 
-// ── Issues ────────────────────────────────────────────────────
-
 export interface GitHubIssue {
   number: number;
   title: string;
   body: string | null;
   state: 'open' | 'closed';
   author: string;
-  labels: string[]; // ← was `string` in your local file, must be `string[]`
+  labels: string[];
   url: string;
   createdAt: string;
   updatedAt: string;
 }
-
-// ── Comments ──────────────────────────────────────────────────
 
 export interface GitHubComment {
   id: number;
@@ -84,32 +69,22 @@ export interface UpdateCommentInput {
   body: string;
 }
 
-// ── Search ────────────────────────────────────────────────────
-
 export interface CodeSearchResult {
   path: string;
   repository: string;
   url: string;
-  /** Matched line snippet (may be undefined for binary files) */
   fragment?: string;
 }
 
 export interface SearchCodeOptions {
-  /** Max results to return (default: 30, max: 100) */
   perPage?: number;
 }
-
-// ── Rate Limit ────────────────────────────────────────────────
-
 export interface GitHubRateLimit {
   limit: number;
   remaining: number;
   resetAt: Date;
-  /** True when remaining < rateLimitThreshold */
   isNearLimit: boolean;
 }
-
-// ── Errors ────────────────────────────────────────────────────
 
 export class GitHubMCPError extends Error {
   constructor(
