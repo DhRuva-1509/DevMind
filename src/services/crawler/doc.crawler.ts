@@ -1,8 +1,3 @@
-// ─────────────────────────────────────────────────────────────
-// Documentation Crawler Service
-// TICKET-08 | DevMind – Documentation Crawler Service
-// ─────────────────────────────────────────────────────────────
-
 import * as cheerio from 'cheerio';
 import { AnyNode } from 'domhandler';
 import {
@@ -20,8 +15,6 @@ import {
   RobotsTxtBlockedError,
 } from './doc.crawler.types';
 
-// ── Interfaces for injection ──────────────────────────────────
-
 export interface HttpResponse {
   status: number;
   data: string;
@@ -36,8 +29,6 @@ export interface BlobWriter {
   write(container: string, key: string, content: string): Promise<void>;
   exists(container: string, key: string): Promise<boolean>;
 }
-
-// ── Defaults ──────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: Required<DocCrawlerConfig> = {
   maxDepth: 3,
@@ -54,19 +45,14 @@ const DEFAULT_CONFIG: Required<DocCrawlerConfig> = {
   enableLogging: true,
 };
 
-// ~4 characters per token — matches Sprint 1 estimation constant
 const CHARS_PER_TOKEN = 4;
 
 export class DocCrawlerService {
   private readonly config: Required<DocCrawlerConfig>;
   private readonly http: HttpClient;
   private readonly blob: BlobWriter;
-
-  /** visited URL set per crawl session */
   private visited = new Set<string>();
-  /** robots.txt allow/disallow rules: domain → disallowed prefixes */
   private robotsCache = new Map<string, string[]>();
-  /** crawl result cache: library → CrawlCacheEntry */
   private resultCache = new Map<string, CrawlCacheEntry>();
 
   constructor(config: DocCrawlerConfig = {}, http: HttpClient, blob: BlobWriter) {
@@ -75,11 +61,6 @@ export class DocCrawlerService {
     this.blob = blob;
   }
 
-  // ── Public API ──────────────────────────────────────────────
-
-  /**
-   * Crawls a named library from the built-in registry.
-   */
   async crawlLibrary(libraryName: string): Promise<CrawlResult> {
     const entry = SUPPORTED_LIBRARIES.find(
       (l) => l.name.toLowerCase() === libraryName.toLowerCase()
@@ -221,8 +202,6 @@ export class DocCrawlerService {
     return this.resultCache.size;
   }
 
-  // ── Fetching ────────────────────────────────────────────────
-
   async fetchPage(url: string, depth: number, frameworkHint?: DocFramework): Promise<CrawlPage> {
     let response: HttpResponse;
     try {
@@ -254,8 +233,6 @@ export class DocCrawlerService {
     };
   }
 
-  // ── Framework Detection ──────────────────────────────────────
-
   detectFramework($: cheerio.CheerioAPI, url: string): DocFramework {
     // Docusaurus: meta generator or characteristic DOM
     const generator = $('meta[name="generator"]').attr('content') ?? '';
@@ -277,8 +254,6 @@ export class DocCrawlerService {
 
     return 'generic';
   }
-
-  // ── Content Extraction ───────────────────────────────────────
 
   extractContent(
     $: cheerio.CheerioAPI,
@@ -326,18 +301,7 @@ export class DocCrawlerService {
     return { title, description, text };
   }
 
-  // ── Link Extraction ──────────────────────────────────────────
-
   extractLinks(html: string, currentUrl: string, seedUrl: string): string[] {
-    // Re-parse just for link extraction from raw stored text isn't ideal —
-    // caller passes the raw response html via page.text but we re-parse here.
-    // In practice crawlUrl passes the page object which came from fetchPage
-    // where we already have the cheerio instance. We accept slight redundancy
-    // to keep fetchPage's return type simple.
-    //
-    // For internal use we operate on plain hrefs gathered during fetchPage.
-    // This method is used when we want to re-derive links from a CrawlPage.
-
     const seedOrigin = this.getOrigin(seedUrl);
     const base = currentUrl;
 
@@ -370,8 +334,6 @@ export class DocCrawlerService {
       return [];
     }
   }
-
-  // ── Chunking ─────────────────────────────────────────────────
 
   /**
    * Splits a page's text into token-bounded chunks.
@@ -429,8 +391,6 @@ export class DocCrawlerService {
     });
   }
 
-  // ── Storage ──────────────────────────────────────────────────
-
   async storeChunk(chunk: ContentChunk): Promise<void> {
     const payload = JSON.stringify({
       sourceUrl: chunk.sourceUrl,
@@ -441,8 +401,6 @@ export class DocCrawlerService {
     });
     await this.blob.write(this.config.storageContainer, chunk.blobKey, payload);
   }
-
-  // ── Robots.txt ───────────────────────────────────────────────
 
   async isBlockedByRobots(url: string): Promise<boolean> {
     const origin = this.getOrigin(url);
@@ -464,10 +422,10 @@ export class DocCrawlerService {
         const disallowed = this.parseRobotsTxt(response.data);
         this.robotsCache.set(origin, disallowed);
       } else {
-        this.robotsCache.set(origin, []); // no robots.txt = allow all
+        this.robotsCache.set(origin, []);
       }
     } catch {
-      this.robotsCache.set(origin, []); // network error = allow all
+      this.robotsCache.set(origin, []);
     }
   }
 
@@ -497,8 +455,6 @@ export class DocCrawlerService {
     return disallowed;
   }
 
-  // ── Cache ────────────────────────────────────────────────────
-
   private getCachedResult(library: string): CrawlResult | null {
     if (!this.config.enableCache) return null;
 
@@ -520,8 +476,6 @@ export class DocCrawlerService {
       expiresAt: Date.now() + this.config.cacheTtlMs,
     });
   }
-
-  // ── URL Utilities ────────────────────────────────────────────
 
   getOrigin(url: string): string {
     try {
@@ -568,8 +522,6 @@ export class DocCrawlerService {
   estimateTokens(text: string): number {
     return Math.ceil(text.length / CHARS_PER_TOKEN);
   }
-
-  // ── Helpers ──────────────────────────────────────────────────
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));

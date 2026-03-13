@@ -1,15 +1,7 @@
-// ─────────────────────────────────────────────────────────────
-// Documentation Crawler Service – Unit Tests
-// TICKET-08 | DevMind – Documentation Crawler Service
-// Framework: Mocha + Chai v4 + Sinon  (matches Sprint pattern)
-// ─────────────────────────────────────────────────────────────
-
 import { expect } from 'chai';
 import sinon, { SinonStub } from 'sinon';
 import { DocCrawlerService, HttpClient, HttpResponse, BlobWriter } from './doc.crawler';
 import { CrawlerError, SUPPORTED_LIBRARIES } from './doc.crawler.types';
-
-// ── Fake Factories ────────────────────────────────────────────
 
 function makeHttp(overrides: Partial<Record<string, HttpResponse>> = {}): HttpClient {
   return {
@@ -53,8 +45,6 @@ function makeCrawler(
   );
   return { crawler, blob };
 }
-
-// ── Minimal HTML fixtures ─────────────────────────────────────
 
 const DOCUSAURUS_HTML = `
 <html>
@@ -124,12 +114,8 @@ const WITH_LINKS_HTML = `
   </body>
 </html>`;
 
-// ── Tests ─────────────────────────────────────────────────────
-
 describe('DocCrawlerService', () => {
   afterEach(() => sinon.restore());
-
-  // ── Constructor ──────────────────────────────────────────────
 
   describe('constructor', () => {
     it('creates an instance with injected dependencies', () => {
@@ -157,8 +143,6 @@ describe('DocCrawlerService', () => {
       expect(crawler.getCacheSize()).to.equal(0);
     });
   });
-
-  // ── getSupportedLibraries ────────────────────────────────────
 
   describe('getSupportedLibraries()', () => {
     it('returns the list of supported libraries', () => {
@@ -205,8 +189,6 @@ describe('DocCrawlerService', () => {
     });
   });
 
-  // ── crawlLibrary ─────────────────────────────────────────────
-
   describe('crawlLibrary()', () => {
     it('throws CrawlerError for unknown library', async () => {
       const { crawler } = makeCrawler();
@@ -231,8 +213,6 @@ describe('DocCrawlerService', () => {
       expect(result.library).to.equal('react');
     });
   });
-
-  // ── crawlUrl ─────────────────────────────────────────────────
 
   describe('crawlUrl()', () => {
     it('returns a CrawlResult with correct shape', async () => {
@@ -323,8 +303,6 @@ describe('DocCrawlerService', () => {
     });
   });
 
-  // ── fetchPage ────────────────────────────────────────────────
-
   describe('fetchPage()', () => {
     it('returns a CrawlPage with correct shape', async () => {
       const { crawler } = makeCrawler({
@@ -393,8 +371,6 @@ describe('DocCrawlerService', () => {
     });
   });
 
-  // ── detectFramework ──────────────────────────────────────────
-
   describe('detectFramework()', () => {
     const { crawler } = makeCrawler();
     const cheerio = require('cheerio');
@@ -424,8 +400,6 @@ describe('DocCrawlerService', () => {
       expect(crawler.detectFramework($, 'https://example.com')).to.equal('generic');
     });
   });
-
-  // ── extractContent ───────────────────────────────────────────
 
   describe('extractContent()', () => {
     const { crawler } = makeCrawler();
@@ -492,8 +466,6 @@ describe('DocCrawlerService', () => {
     });
   });
 
-  // ── extractLinks ─────────────────────────────────────────────
-
   describe('extractLinks()', () => {
     const { crawler } = makeCrawler();
     const seed = 'https://docs.example.com';
@@ -537,8 +509,6 @@ describe('DocCrawlerService', () => {
     });
   });
 
-  // ── chunkText ────────────────────────────────────────────────
-
   describe('chunkText()', () => {
     const { crawler } = makeCrawler();
     const opts = { targetTokens: 100, minTokens: 20, maxTokens: 150 };
@@ -571,7 +541,7 @@ describe('DocCrawlerService', () => {
         'This is a much longer paragraph that should survive the minimum token filter because it has enough content.';
       const chunks = crawler.chunkText(text, { targetTokens: 100, minTokens: 10, maxTokens: 200 });
       chunks.forEach((c) => {
-        expect(c.length).to.be.greaterThan(10 * 4); // minTokens * CHARS_PER_TOKEN
+        expect(c.length).to.be.greaterThan(10 * 4);
       });
     });
 
@@ -580,7 +550,7 @@ describe('DocCrawlerService', () => {
       const text = Array(10).fill(para).join('\n\n');
       const chunks = crawler.chunkText(text, opts);
       chunks.forEach((c) => {
-        expect(c.length).to.be.at.most(opts.maxTokens * 4 + 50); // small tolerance for paragraph boundary
+        expect(c.length).to.be.at.most(opts.maxTokens * 4 + 50);
       });
     });
 
@@ -596,8 +566,6 @@ describe('DocCrawlerService', () => {
       paras.forEach((p) => expect(combined).to.include(p.split(' ')[0]));
     });
   });
-
-  // ── chunkPage ────────────────────────────────────────────────
 
   describe('chunkPage()', () => {
     const { crawler } = makeCrawler();
@@ -685,8 +653,6 @@ describe('DocCrawlerService', () => {
     });
   });
 
-  // ── robots.txt ───────────────────────────────────────────────
-
   describe('parseRobotsTxt()', () => {
     const { crawler } = makeCrawler();
 
@@ -769,8 +735,6 @@ describe('DocCrawlerService', () => {
       expect(blocked).to.be.false;
     });
   });
-
-  // ── URL Utilities ────────────────────────────────────────────
 
   describe('getOrigin()', () => {
     const { crawler } = makeCrawler();
@@ -855,8 +819,6 @@ describe('DocCrawlerService', () => {
       expect(crawler.estimateTokens('')).to.equal(0);
     });
   });
-
-  // ── Caching ──────────────────────────────────────────────────
 
   describe('caching', () => {
     it('caches crawl result after first crawl', async () => {
