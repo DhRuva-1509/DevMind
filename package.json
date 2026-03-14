@@ -2,16 +2,24 @@
   "name": "devmind",
   "displayName": "DevMind",
   "publisher": "Dhruva Patil",
-  "description": "",
+  "description": "AI-powered version guard for JavaScript/TypeScript — detects deprecated API usage based on your installed library versions.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.109.0"
   },
   "categories": [
+    "Linters",
     "Other"
   ],
   "activationEvents": [
-    "onCommand:devmind.helloWorld"
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onCommand:devmind.helloWorld",
+    "onCommand:devmind.versionGuard.analyzeFile",
+    "onCommand:devmind.versionGuard.indexLibrary",
+    "onCommand:devmind.versionGuard.showPanel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -19,6 +27,88 @@
       {
         "command": "devmind.helloWorld",
         "title": "DevMind: Hello World"
+      },
+      {
+        "command": "devmind.versionGuard.analyzeFile",
+        "title": "DevMind: Analyze Current File",
+        "icon": "$(search)"
+      },
+      {
+        "command": "devmind.versionGuard.indexLibrary",
+        "title": "DevMind: Index Library",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "devmind.versionGuard.showPanel",
+        "title": "DevMind: Show Indexed Libraries",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "devmind.versionGuard.refreshPanel",
+        "title": "DevMind: Refresh Panel",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "devmind.versionGuard.toggle",
+        "title": "DevMind: Toggle Version Guard On/Off",
+        "icon": "$(shield-x)"
+      },
+      {
+        "command": "devmind.versionGuard.clearDiagnostics",
+        "title": "DevMind: Clear All Warnings",
+        "icon": "$(clear-all)"
+      }
+    ],
+    "configuration": {
+      "title": "DevMind",
+      "properties": {
+        "devmind.versionGuard.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable DevMind Version Guard — detects deprecated API usage based on your installed library versions."
+        },
+        "devmind.versionGuard.minConfidence": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum confidence score (0–1) required to surface a warning. Higher = fewer but more certain warnings."
+        },
+        "devmind.versionGuard.topK": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Number of documentation chunks to retrieve per query when analyzing a file."
+        },
+        "devmind.versionGuard.projectId": {
+          "type": "string",
+          "default": "",
+          "description": "Project identifier used to scope documentation indexes. Defaults to workspace folder name if empty."
+        },
+        "devmind.azure.openaiEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Azure OpenAI endpoint URL (e.g. https://my-resource.openai.azure.com)"
+        },
+        "devmind.azure.searchEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Azure AI Search endpoint URL"
+        },
+        "devmind.azure.keyVaultUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Azure Key Vault URL for secret resolution"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "devmind.versionGuard.analyzeFile",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "editorTextFocus"
       }
     ]
   },
@@ -36,9 +126,13 @@
     "test:vscode": "vscode-test"
   },
   "devDependencies": {
+    "@tanstack/react-query": "^5.90.21",
     "@types/chai": "^4.3.20",
+    "@types/dotenv": "^6.1.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.19.15",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/sinon": "^21.0.0",
     "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
@@ -69,6 +163,7 @@
     "axios": "^1.13.5",
     "cheerio": "^1.2.0",
     "domhandler": "^5.0.3",
+    "dotenv": "^17.3.1",
     "openai": "^6.25.0",
     "tiktoken": "^1.0.22"
   }
