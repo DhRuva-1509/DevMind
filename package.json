@@ -57,6 +57,18 @@
         "command": "devmind.versionGuard.clearDiagnostics",
         "title": "DevMind: Clear All Warnings",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "devmind.testPRSummary.loading",
+        "title": "DevMind: Test PR Summary - Loading"
+      },
+      {
+        "command": "devmind.testPRSummary.success",
+        "title": "DevMind: Test PR Summary - Success"
+      },
+      {
+        "command": "devmind.testPRSummary.error",
+        "title": "DevMind: Test PR Summary - Error"
       }
     ],
     "configuration": {
