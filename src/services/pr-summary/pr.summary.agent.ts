@@ -6,7 +6,6 @@ import {
   SummaryStatus,
   ChunkSummary,
   FoundryRunResult,
-  PRSummaryFoundryError,
   PRSummaryContextError,
 } from './pr.summary.types';
 import { ExtractedPRContext } from '../pr-context/pr.context.types';

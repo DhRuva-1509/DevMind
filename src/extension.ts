@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 
-// Load .env from project root
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 import {
@@ -57,6 +56,10 @@ import {
 import { VersionGuardWarning, OpenAIAnalysisResponse } from './services/agents/version.guard.types';
 import axios from 'axios';
 import { AzureOpenAI } from 'openai';
+
+import { PRSummaryPanel } from './services/pr-summary-panel/pr.summary.panel';
+import { PRSummaryPanelAdapter } from './services/pr-summary-panel/pr.summary.panel';
+import { PanelMessage } from './services/pr-summary-panel/pr.summary.panel.types';
 
 function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
   return {
@@ -224,7 +227,6 @@ function buildAzureServices() {
     indexName: 'devmind-default',
     enableLogging: false,
   });
-
   const searchApiKey = process.env.AZURE_SEARCH_API_KEY ?? '';
   const searchEndpoint = process.env.AZURE_SEARCH_ENDPOINT ?? '';
   const directSearchIndexClient =
@@ -369,7 +371,6 @@ function buildDocIndexService(
     },
     async upsertDocuments(indexName, docs) {
       try {
-        // Use direct API key client to avoid DefaultAzureCredential issues
         const directClient = getDirectSearchClient(indexName);
         if (!directClient) {
           return {
@@ -399,7 +400,6 @@ function buildDocIndexService(
       }
     },
     async deleteDocuments(indexName, ids) {
-      // deleteDocuments(documentIds, indexName?)
       const result = await searchService.deleteDocuments(ids, indexName);
       return { success: result.success };
     },
@@ -415,7 +415,6 @@ function buildDocIndexService(
         };
         if (options?.filter) searchOptions.filter = options.filter;
 
-        // Use vector search only when we have a valid non-empty vector
         if (vector && Array.isArray(vector) && vector.length > 0) {
           searchOptions.vectorSearchOptions = {
             queries: [
@@ -429,7 +428,6 @@ function buildDocIndexService(
           };
         }
 
-        // Always use text search — works even without vector
         const searchText = query && query.trim() ? query : '*';
         const iter = await directClient.search(searchText, searchOptions);
         for await (const result of iter.results) {
@@ -479,11 +477,9 @@ function buildDocIndexService(
   const embeddingAdapter: EmbeddingAdapter = {
     async embed(texts) {
       try {
-        // Use OpenAI REST API directly with API key — bypasses DefaultAzureCredential
         const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
         const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
-        const deployment = 'text-embedding-3-small'; // use small for faster/cheaper demo
-
+        const deployment = 'text-embedding-3-small';
         const url = `${endpoint}openai/deployments/${deployment}/embeddings?api-version=2024-02-01`;
         const inputTexts = Array.isArray(texts) ? texts : [texts];
 
@@ -515,8 +511,6 @@ function buildDocIndexService(
     embeddingAdapter
   );
 }
-
-// ── Build VersionGuardAgent adapters ──────────────────────────
 
 function buildVersionGuardAgent(
   openaiService: AzureOpenAIService,
@@ -558,8 +552,6 @@ function buildVersionGuardAgent(
       try {
         const response = await docIndexService.search(pid, query, {
           library: options.library,
-          // Don't filter by version — docs are indexed as 'latest'
-          // version: options.version,
           topK: options.topK,
         });
         return response.results.map((r) => ({
@@ -584,6 +576,7 @@ function buildVersionGuardAgent(
   const openaiAdapter: OpenAIAdapter = {
     async analyze(prompt, deployment) {
       try {
+        // Use OpenAI REST API directly with API key
         const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
         const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
         const model = deployment ?? 'gpt-4o';
@@ -618,11 +611,8 @@ function buildVersionGuardAgent(
   const loggingAdapter: LoggingAdapter = {
     async log(entry) {
       try {
-        // upsert<T>(containerName, item) — item needs id field for Cosmos
         await cosmosService.upsert('telemetry', entry as any);
-      } catch {
-        // Non-fatal — logging failure never breaks the extension
-      }
+      } catch {}
     },
   };
 
@@ -729,7 +719,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
   const ts = Date.now();
 
   try {
-    // Try to fetch the actual docs page
     const response = await axios.get(entry.url, {
       timeout: 10000,
       headers: { 'User-Agent': 'DevMind/1.0' },
@@ -738,7 +727,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
 
     const html = response.data as string;
 
-    // Simple text extraction — strip HTML tags
     const text = html
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -746,7 +734,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
       .replace(/\s+/g, ' ')
       .trim();
 
-    // Split into ~500 token chunks
     const words = text.split(' ').filter((w) => w.length > 0);
     const chunkSize = 400;
     for (let i = 0; i < Math.min(words.length, chunkSize * 10); i += chunkSize) {
@@ -764,11 +751,9 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
       });
     }
   } catch {
-    // Fallback: use built-in description if fetch fails
     console.log(`DevMind: fetch failed for ${library}, using fallback description`);
   }
 
-  // Always add the built-in description as a chunk
   chunks.push({
     id: `${library}-desc-${ts}`,
     content: entry.description,
@@ -783,29 +768,23 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
   return chunks;
 }
 
-// ── Activate ──────────────────────────────────────────────────────────────────────────────────
-
 export function activate(context: vscode.ExtensionContext): void {
   console.log('DevMind: activating...');
 
-  // 1. VS Code adapter
   const adapter = buildAdapter(context);
 
-  // 2. UI service classes
   const diagManager = new VersionGuardDiagnostics(adapter);
   const statusBar = new StatusBarManager(adapter);
   const panel = new VersionGuardPanel(adapter);
   const provider = new VersionGuardProvider(diagManager, adapter);
   const progress = new ProgressManager(adapter);
 
-  // 3. Feature toggle (reads VS Code setting)
   const toggle: FeatureToggleAdapter = {
     isEnabled(): boolean {
       return (adapter.getConfiguration('versionGuard.enabled') as boolean) ?? true;
     },
   };
 
-  // 4. Azure services
   const {
     openaiService,
     searchService,
@@ -815,10 +794,8 @@ export function activate(context: vscode.ExtensionContext): void {
     getDirectSearchClient,
   } = buildAzureServices();
 
-  // 5. Project ID from workspace
   const projectId = vscode.workspace.name ?? 'devmind';
 
-  // 6. Higher-level services
   const docIndexService = buildDocIndexService(
     searchService,
     openaiService,
@@ -835,7 +812,6 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   const crawler = buildDocCrawler(blobService);
 
-  // 7. Code action provider (lightbulb)
   context.subscriptions.push(
     vscode.languages.registerCodeActionsProvider(
       [
@@ -866,9 +842,7 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // 8. Command handlers — real Azure pipeline
   const handlers: CommandHandlers = {
-    // REAL: Analyze file using VersionGuardAgent → Azure OpenAI + Search
     async analyzeFile(): Promise<void> {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
@@ -1084,6 +1058,115 @@ export function activate(context: vscode.ExtensionContext): void {
 
   adapter.registerCommand('devmind.helloWorld', () => {
     adapter.showInformationMessage('Hello World from DevMind!');
+  });
+
+  // ── PR Summary Panel test commands (TICKET-15) ────────────────
+  const prPanelAdapter: PRSummaryPanelAdapter = {
+    createWebviewPanel(viewType: string, title: string) {
+      const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      });
+      return {
+        get html() {
+          return panel.webview.html;
+        },
+        set html(v: string) {
+          panel.webview.html = v;
+        },
+        reveal() {
+          panel.reveal(vscode.ViewColumn.Beside);
+        },
+        dispose() {
+          panel.dispose();
+        },
+        postMessage(msg: unknown) {
+          panel.webview.postMessage(msg);
+        },
+        onDidDispose(cb: () => void) {
+          panel.onDidDispose(cb);
+        },
+        onDidReceiveMessage(cb: (msg: PanelMessage) => void) {
+          panel.webview.onDidReceiveMessage(cb);
+        },
+      };
+    },
+    showInformationMessage: (msg: string) => {
+      vscode.window.showInformationMessage(msg);
+    },
+    showErrorMessage: (msg: string) => {
+      vscode.window.showErrorMessage(msg);
+    },
+    openExternal: (url: string) => {
+      vscode.env.openExternal(vscode.Uri.parse(url));
+    },
+    writeClipboard: (text: string) => vscode.env.clipboard.writeText(text),
+    registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
+      context.subscriptions.push(vscode.commands.registerCommand(id, handler));
+    },
+  };
+  const prSummaryPanel = new PRSummaryPanel(prPanelAdapter);
+
+  // devmind.testPRSummary.loading — shows the loading spinner
+  adapter.registerCommand('devmind.testPRSummary.loading', () => {
+    prSummaryPanel.showLoading(42, 'dhruva/devmind');
+  });
+
+  // devmind.testPRSummary.success — shows a realistic success state
+  adapter.registerCommand('devmind.testPRSummary.success', () => {
+    const testSummaryText =
+      '## Summary\n' +
+      'This PR migrates all `useQuery` calls from the deprecated array syntax to the v5 object syntax across 6 files.\n\n' +
+      '## Changes\n' +
+      '- Updated `useQuery([key], fn)` to `useQuery({ queryKey, queryFn })` in all hooks\n' +
+      '- Removed deprecated `onSuccess` / `onError` callbacks (moved to `useEffect`)\n' +
+      '- Updated `useInfiniteQuery` page param signature\n' +
+      '- Added migration test coverage for v5 patterns\n\n' +
+      '## Impact\n' +
+      'Low risk — purely syntactic migration with no behaviour changes. All existing tests pass.\n\n' +
+      '## Notes\n' +
+      'Linked to #10 (React Query v5 migration epic). Follow-up PR will update `useMutation` calls.';
+
+    const testSummary = {
+      id: 'pr-summary-dhruva-devmind-42',
+      owner: 'dhruva',
+      repo: 'devmind',
+      prNumber: 42,
+      prTitle: 'feat: migrate useQuery to v5 syntax',
+      prState: 'open',
+      summary: testSummaryText,
+      chunkSummaries: [] as any[],
+      wasChunked: false,
+      foundryAgentId: 'agent-devmind-01',
+      foundryThreadId: 'thread-abc123',
+      templateVersion: '1.0.0',
+      abVariant: null as string | null,
+      status: 'complete' as const,
+      errorMessage: null as string | null,
+      trigger: 'command' as const,
+      generatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      prUpdatedAt: new Date().toISOString(),
+    };
+
+    prSummaryPanel.showSummary(testSummary);
+    prSummaryPanel.setLinkedIssues([
+      {
+        number: 10,
+        title: 'React Query v5 migration epic',
+        source: 'pr_body',
+        url: 'https://github.com/dhruva/devmind/issues/10',
+      },
+      { number: 7, title: 'Upgrade @tanstack/react-query', source: 'branch_name', url: null },
+    ]);
+  });
+
+  // devmind.testPRSummary.error — shows the error state
+  adapter.registerCommand('devmind.testPRSummary.error', () => {
+    prSummaryPanel.showError(
+      42,
+      'Foundry agent unavailable — Azure AI service returned 503. Please try again in a few minutes.'
+    );
   });
 
   console.log(
