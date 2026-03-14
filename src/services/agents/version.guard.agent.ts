@@ -77,10 +77,6 @@ export class VersionGuardAgent {
     this.toggle = toggle;
   }
 
-  /**
-   * Main entry point — analyzes a file and returns version guard warnings.
-   * Called on file save or manual command trigger.
-   */
   async analyzeFile(
     filePath: string,
     fileContent: string,
@@ -123,9 +119,7 @@ export class VersionGuardAgent {
         this.isUsageFromLibrary(u.sourceModule, library)
       );
 
-      if (libraryUsages.length === 0) {
-        continue;
-      }
+      if (libraryUsages.length === 0) continue;
 
       analyzedLibraries.push(library);
 
@@ -157,6 +151,7 @@ export class VersionGuardAgent {
         skippedLibraries.push(library);
         continue;
       }
+
       const libraryWarnings = this.mapWarnings(
         analysisResponse.warnings,
         library,
@@ -189,10 +184,6 @@ export class VersionGuardAgent {
     return this.extractor.extract(filePath, content);
   }
 
-  /**
-   * Builds the OpenAI analysis prompt from context.
-   * AC-4: The prompt instructs GPT-4o to detect outdated API usage.
-   */
   buildAnalysisPrompt(ctx: AnalysisPromptContext): string {
     const docsSection = ctx.relevantDocs
       .slice(0, 5)
@@ -221,7 +212,7 @@ Return a JSON object with this exact structure:
     {
       "symbol": "the deprecated symbol name",
       "message": "clear explanation of what changed and why",
-      "suggestion": "the correct replacement code or pattern",
+      "suggestion": "ONLY the corrected function call expression — valid TypeScript code that directly replaces the deprecated call — no explanation text, no sentences, just code e.g. useQuery({ queryKey: ['user', id], queryFn: fetchUser })",
       "confidence": 0.0-1.0,
       "severity": "error|warning|info",
       "line": 0,
@@ -237,19 +228,14 @@ Rules:
 - Set severity "error" for removed APIs, "warning" for deprecated, "info" for best-practice changes
 - Return empty warnings array if no issues found
 - Do not invent issues not supported by the documentation
+- The "suggestion" field must be ONLY valid replacement code — it will be pasted directly into the source file
 - Return ONLY the JSON object, no markdown, no explanation`;
   }
 
-  /**
-   * Builds a search query from symbol names and library context.
-   */
   buildSearchQuery(symbols: string[], library: string, version: string): string {
     return `${symbols.slice(0, 5).join(' ')} ${library} ${version} deprecated changed migration`;
   }
 
-  /**
-   * Extracts a focused code snippet around API usages (max 50 lines).
-   */
   buildCodeSnippet(content: string, usages: Array<{ line: number }>): string {
     if (usages.length === 0) return content.slice(0, 2000);
 
@@ -264,10 +250,6 @@ Rules:
       .join('\n');
   }
 
-  /**
-   * Maps OpenAI output to typed VersionGuardWarning objects.
-   * Filters by confidence threshold and attaches quick fixes.
-   */
   mapWarnings(
     raw: OpenAIWarningOutput[],
     library: string,
@@ -298,9 +280,6 @@ Rules:
       });
   }
 
-  /**
-   * AC-6: Builds a Quick Fix code action for a warning.
-   */
   buildQuickFix(
     suggestion: string,
     symbol: string,
@@ -308,14 +287,38 @@ Rules:
     fileContent: string
   ): QuickFix {
     const lines = fileContent.split('\n');
-    const line = lines[location.line] ?? '';
+    const startLineText = lines[location.line] ?? '';
 
-    // Find the extent of the symbol call on the line
-    const symbolIdx = line.indexOf(symbol);
+    // Find where the symbol call starts on the line
+    const symbolIdx = startLineText.indexOf(symbol);
     const startChar = symbolIdx >= 0 ? symbolIdx : location.character;
 
-    // Try to find end of call — look for matching closing paren
-    const endChar = this.findCallEnd(line, startChar);
+    // Walk forward across lines to find the matching closing paren
+    // This handles multiline calls like useQuery(['key'], () =>\n  fetch(...)\n)
+    let endLine = location.line;
+    let endChar = startLineText.length;
+    let depth = 0;
+    let started = false;
+
+    outer: for (let li = location.line; li < Math.min(lines.length, location.line + 30); li++) {
+      const lineText = lines[li] ?? '';
+      const charStart = li === location.line ? startChar : 0;
+
+      for (let ci = charStart; ci < lineText.length; ci++) {
+        const ch = lineText[ci];
+        if (ch === '(') {
+          depth++;
+          started = true;
+        } else if (ch === ')') {
+          depth--;
+          if (started && depth === 0) {
+            endLine = li;
+            endChar = ci + 1;
+            break outer;
+          }
+        }
+      }
+    }
 
     return {
       title: `Replace ${symbol} with suggested fix`,
@@ -324,16 +327,12 @@ Rules:
         filePath: location.filePath,
         line: location.line,
         character: startChar,
-        endLine: location.line,
+        endLine,
         endCharacter: endChar,
       },
     };
   }
 
-  /**
-   * Finds the end character of a function call starting at startIdx.
-   * Returns end of line if no closing paren found.
-   */
   findCallEnd(line: string, startIdx: number): number {
     let depth = 0;
     let started = false;
@@ -359,12 +358,10 @@ Rules:
     const result: Record<string, string> = {};
 
     for (const lib of libraries) {
-      // Direct match
       if (all[lib]) {
         result[lib] = this.normalizeVersion(all[lib]);
         continue;
       }
-      // Try known aliases (e.g. @tanstack/react-query → react-query)
       for (const [raw, version] of Object.entries(all)) {
         if (raw.includes(lib) || lib.includes(raw.replace('@', '').split('/').pop() ?? '')) {
           result[lib] = this.normalizeVersion(version);
@@ -376,20 +373,14 @@ Rules:
     return result;
   }
 
-  /**
-   * Strips semver range operators to get a clean version string.
-   * "^18.2.0" → "18.2.0", ">=5.0.0" → "5.0.0"
-   */
   normalizeVersion(raw: string): string {
     return raw.replace(/^[\^~>=<]+/, '').trim();
   }
 
   private isUsageFromLibrary(sourceModule: string, library: string): boolean {
-    // Check direct match and common scoped package patterns
     if (sourceModule === library) return true;
     if (sourceModule.includes(library)) return true;
 
-    // Check alias map
     const normalized: Record<string, string> = {
       '@tanstack/react-query': 'react-query',
       '@prisma/client': 'prisma',
