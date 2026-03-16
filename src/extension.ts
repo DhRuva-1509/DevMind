@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 
-// Load .env from project root
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 import {
@@ -234,7 +233,6 @@ function buildAzureServices() {
     indexName: 'devmind-default',
     enableLogging: false,
   });
-
   const searchApiKey = process.env.AZURE_SEARCH_API_KEY ?? '';
   const searchEndpoint = process.env.AZURE_SEARCH_ENDPOINT ?? '';
   const directSearchIndexClient =
@@ -383,7 +381,6 @@ function buildDocIndexService(
     },
     async upsertDocuments(indexName, docs) {
       try {
-        // Use direct API key client to avoid DefaultAzureCredential issues
         const directClient = getDirectSearchClient(indexName);
         if (!directClient) {
           return {
@@ -413,7 +410,6 @@ function buildDocIndexService(
       }
     },
     async deleteDocuments(indexName, ids) {
-      // deleteDocuments(documentIds, indexName?)
       const result = await searchService.deleteDocuments(ids, indexName);
       return { success: result.success };
     },
@@ -429,7 +425,6 @@ function buildDocIndexService(
         };
         if (options?.filter) searchOptions.filter = options.filter;
 
-        // Use vector search only when we have a valid non-empty vector
         if (vector && Array.isArray(vector) && vector.length > 0) {
           searchOptions.vectorSearchOptions = {
             queries: [
@@ -443,7 +438,6 @@ function buildDocIndexService(
           };
         }
 
-        // Always use text search — works even without vector
         const searchText = query && query.trim() ? query : '*';
         const iter = await directClient.search(searchText, searchOptions);
         for await (const result of iter.results) {
@@ -493,11 +487,9 @@ function buildDocIndexService(
   const embeddingAdapter: EmbeddingAdapter = {
     async embed(texts) {
       try {
-        // Use OpenAI REST API directly with API key — bypasses DefaultAzureCredential
         const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
         const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
-        const deployment = 'text-embedding-3-small'; // use small for faster/cheaper demo
-
+        const deployment = 'text-embedding-3-small';
         const url = `${endpoint}openai/deployments/${deployment}/embeddings?api-version=2024-02-01`;
         const inputTexts = Array.isArray(texts) ? texts : [texts];
 
@@ -570,8 +562,6 @@ function buildVersionGuardAgent(
       try {
         const response = await docIndexService.search(pid, query, {
           library: options.library,
-          // Don't filter by version — docs are indexed as 'latest'
-          // version: options.version,
           topK: options.topK,
         });
         return response.results.map((r) => ({
@@ -632,9 +622,7 @@ function buildVersionGuardAgent(
     async log(entry) {
       try {
         await cosmosService.upsert('telemetry', entry as any);
-      } catch {
-        // Non-fatal — logging failure never breaks the extension
-      }
+      } catch {}
     },
   };
 
