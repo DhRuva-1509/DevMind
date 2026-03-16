@@ -41,6 +41,7 @@ function makeAdapter(webview?: PanelWebview): PRSummaryPanelAdapter & { _webview
     openExternal: sinon.stub(),
     writeClipboard: sinon.stub().resolves(),
     registerCommand: sinon.stub(),
+    postSummaryToGitHub: sinon.stub().resolves(),
     _webview: wv,
   };
 }
@@ -536,22 +537,21 @@ describe('PRSummaryPanel', () => {
       expect(clipText).to.include('useQuery');
     });
 
-    it('post-to-pr command calls openExternal when prUrl set', async () => {
+    it('post-to-pr command calls postSummaryToGitHub when summary available', async () => {
       const wv = makeWebview();
       const adapter = makeAdapter(wv);
       const { panel } = makePanel(adapter);
       panel.showSummary(makeSummary());
-      panel['state'].prUrl = 'https://github.com/owner/repo/pull/42';
       await (wv as any)._triggerMessage({ command: 'post-to-pr' });
       await new Promise((r) => setTimeout(r, 0));
-      expect((adapter.openExternal as SinonStub).callCount).to.equal(1);
+      expect((adapter.postSummaryToGitHub as SinonStub).callCount).to.equal(1);
     });
 
-    it('post-to-pr shows info message when no prUrl', async () => {
+    it('post-to-pr shows info message when no summary available', async () => {
       const wv = makeWebview();
       const adapter = makeAdapter(wv);
       const { panel } = makePanel(adapter);
-      panel.showSummary(makeSummary());
+      panel.show();
       await (wv as any)._triggerMessage({ command: 'post-to-pr' });
       await new Promise((r) => setTimeout(r, 0));
       expect((adapter.showInformationMessage as SinonStub).callCount).to.equal(1);

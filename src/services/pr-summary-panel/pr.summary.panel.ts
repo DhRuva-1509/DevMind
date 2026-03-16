@@ -25,10 +25,16 @@ export interface PRSummaryPanelAdapter {
   openExternal(url: string): void;
   writeClipboard(text: string): Promise<void> | Thenable<void>;
   registerCommand(id: string, handler: (...args: unknown[]) => unknown): void;
+  postSummaryToGitHub(summary: PRSummary): Promise<void>;
 }
 
 export class PRSummaryPanel {
   private panel: PanelWebview | null = null;
+  private onRegenerateCallback: ((prNumber: number, repoLabel: string) => void) | null = null;
+
+  onRegenerate(cb: (prNumber: number, repoLabel: string) => void): void {
+    this.onRegenerateCallback = cb;
+  }
   private state: PRSummaryPanelState = PRSummaryPanel.emptyState();
 
   constructor(private readonly adapter: PRSummaryPanelAdapter) {}
@@ -133,6 +139,7 @@ export class PRSummaryPanel {
     }
   }
 
+  /** AC-5: Copy summary to clipboard */
   private async handleCopy(): Promise<void> {
     if (!this.state.summary) return;
     try {
@@ -143,20 +150,50 @@ export class PRSummaryPanel {
     }
   }
 
-  private handlePostToPR(): void {
-    if (this.state.prUrl) {
-      this.adapter.openExternal(this.state.prUrl);
-    } else {
-      this.adapter.showInformationMessage('DevMind: No PR URL available to post to.');
+  /** AC-6: Post summary to GitHub via PRCommentPoster */
+  private async handlePostToPR(): Promise<void> {
+    if (!this.state.summary || !this.state.prNumber) {
+      this.adapter.showInformationMessage('DevMind: No summary available to post.');
+      return;
+    }
+    const summaryRecord = {
+      id: `pr-summary-${this.state.repoLabel ?? 'unknown'}-${this.state.prNumber}`,
+      owner: this.state.repoLabel?.split('/')[0] ?? '',
+      repo: this.state.repoLabel?.split('/')[1] ?? '',
+      prNumber: this.state.prNumber,
+      prTitle: this.state.prTitle ?? '',
+      prState: 'open',
+      summary: this.state.summary,
+      chunkSummaries: [],
+      wasChunked: this.state.wasChunked,
+      foundryAgentId: null,
+      foundryThreadId: null,
+      templateVersion: this.state.templateVersion ?? '1.0.0',
+      abVariant: null,
+      status: 'complete' as const,
+      errorMessage: null,
+      trigger: 'command' as const,
+      generatedAt: this.state.generatedAt ?? new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      prUpdatedAt: new Date().toISOString(),
+    };
+    try {
+      await this.adapter.postSummaryToGitHub(summaryRecord as any);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.adapter.showErrorMessage(`DevMind: Failed to post — ${msg}`);
     }
   }
 
+  /** AC-7: Trigger regeneration — sets loading state and fires registered callback */
   private handleRegenerate(): void {
-    if (this.state.prNumber == null) return;
+    const prNumber = this.state.prNumber;
+    if (prNumber == null) return;
     this.state = { ...this.state, loadingState: 'loading' };
     this.refresh();
-    // Fire the regenerate command — wired in extension.ts
-    this.adapter.registerCommand(PR_SUMMARY_COMMANDS.REGENERATE, () => {});
+    if (this.onRegenerateCallback) {
+      this.onRegenerateCallback(prNumber, this.state.repoLabel ?? '');
+    }
   }
 
   private handleOpenIssue(url: string): void {
@@ -179,6 +216,7 @@ export class PRSummaryPanel {
     if (/\bmedium\b/.test(impactText)) return 'medium';
     if (/\blow\b/.test(impactText)) return 'low';
 
+    // Fallback: keyword scanning
     if (/breaking[\s-]change|security|critical|database migration|schema change/.test(lower))
       return 'high';
     if (/deprecated|refactor|performance|multiple files|api change/.test(lower)) return 'medium';
@@ -249,6 +287,7 @@ export class PRSummaryPanel {
 
     const renderSummary = (s: PRSummaryPanelState): string => {
       const md = s.summary ?? '';
+      // Convert markdown headers and basic formatting to HTML
       const html = md
         .replace(/^## (.+)$/gm, '<h2>$1</h2>')
         .replace(/^### (.+)$/gm, '<h3>$1</h3>')

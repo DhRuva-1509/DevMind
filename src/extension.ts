@@ -60,6 +60,12 @@ import { AzureOpenAI } from 'openai';
 import { PRSummaryPanel } from './services/pr-summary-panel/pr.summary.panel';
 import { PRSummaryPanelAdapter } from './services/pr-summary-panel/pr.summary.panel';
 import { PanelMessage } from './services/pr-summary-panel/pr.summary.panel.types';
+import { PRCommentPoster } from './services/pr-comment/pr.comment.poster';
+import { PRSummary } from './services/pr-summary/pr.summary.types';
+import { GitHubMCPClient } from './services/mcp/github.client';
+import { PRSummaryAgent } from './services/pr-summary/pr.summary.agent';
+import { PRContextExtractorService } from './services/pr-context/pr.context.service';
+import { PromptTemplateService } from './services/prompt-templates/prompt.template.service';
 
 function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
   return {
@@ -234,6 +240,7 @@ function buildAzureServices() {
       ? new SearchIndexClient(searchEndpoint, new AzureKeyCredential(searchApiKey))
       : null;
 
+  // Factory for per-index search clients using API key
   const getDirectSearchClient = (indexName: string) =>
     searchEndpoint && searchApiKey
       ? new SearchClient(searchEndpoint, indexName, new AzureKeyCredential(searchApiKey))
@@ -294,6 +301,7 @@ function buildDocIndexService(
             filterable: f.filterable ?? false,
             retrievable: f.retrievable ?? true,
           };
+          // Vector fields: SDK v12 uses vectorSearchDimensions (not dimensions)
           if (f.dimensions) {
             field.vectorSearchDimensions = Number(f.dimensions);
             field.vectorSearchProfileName = f.vectorSearchProfile ?? 'devmind-vector-profile';
@@ -306,6 +314,7 @@ function buildDocIndexService(
           JSON.stringify(fields.find((f: any) => f.name === 'contentVector'))
         );
 
+        // Build vector search config if any vector fields exist
         const hasVectorFields = ((schema as any).fields ?? []).some((f: any) => f.dimensions);
         const vectorSearch = hasVectorFields
           ? {
@@ -318,6 +327,7 @@ function buildDocIndexService(
             }
           : undefined;
 
+        // Semantic search config
         const semanticSearch = {
           defaultConfigurationName: 'devmind-semantic',
           configurations: [
@@ -644,9 +654,11 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
 
   const blobWriter: BlobWriter = {
     async write(container: string, key: string, content: string): Promise<void> {
+      // uploadBlob(blobName, content, options?, containerName?)
       await blobService.uploadBlob(key, content, { contentType: 'application/json' }, container);
     },
     async exists(container: string, key: string): Promise<boolean> {
+      // blobExists(blobName, containerName?)
       return blobService.blobExists(key, container);
     },
   };
@@ -726,7 +738,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
     });
 
     const html = response.data as string;
-
     const text = html
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -914,7 +925,6 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     },
 
-    // REAL: Index library using DocCrawler → Blob → DocIndexService → Azure Search
     async indexLibrary(): Promise<void> {
       const library = await adapter.showQuickPick([
         'react-query',
@@ -1060,7 +1070,6 @@ export function activate(context: vscode.ExtensionContext): void {
     adapter.showInformationMessage('Hello World from DevMind!');
   });
 
-  // ── PR Summary Panel test commands (TICKET-15) ────────────────
   const prPanelAdapter: PRSummaryPanelAdapter = {
     createWebviewPanel(viewType: string, title: string) {
       const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
@@ -1104,12 +1113,77 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
       context.subscriptions.push(vscode.commands.registerCommand(id, handler));
     },
+    async postSummaryToGitHub(summary: PRSummary): Promise<void> {
+      const githubToken = process.env.GITHUB_TOKEN ?? '';
+
+      if (!githubToken) {
+        vscode.window.showErrorMessage(
+          'DevMind: GITHUB_TOKEN not set. Add it to your .env file to post PR comments.'
+        );
+        return;
+      }
+
+      // AC-4.1: Wire GitHubMCPClient — uses PAT token, no DefaultAzureCredential
+      const ghClient = new GitHubMCPClient({ token: githubToken });
+
+      const poster = new PRCommentPoster(
+        { enableLogging: true },
+        {
+          // Adapter wraps GitHubMCPClient — follows injected adapter pattern (TD-4.1)
+          async listPRComments(owner, repo, prNumber) {
+            const comments = await ghClient.listPRComments(owner, repo, prNumber);
+            return comments.map((c) => ({ id: c.id, body: c.body, author: c.author, url: c.url }));
+          },
+          async createPRComment(owner, repo, prNumber, body) {
+            const result = await ghClient.createPRComment(owner, repo, prNumber, { body });
+            return { id: result.id, url: result.url };
+          },
+          async updatePRComment(owner, repo, commentId, body) {
+            const result = await ghClient.updatePRComment(owner, repo, commentId, { body });
+            return { id: result.id, url: result.url };
+          },
+        },
+        {
+          async confirm(message: string, detail?: string): Promise<boolean> {
+            const choice = await vscode.window.showInformationMessage(
+              message,
+              { modal: true, detail: detail ?? '' },
+              'Post Comment'
+            );
+            return choice === 'Post Comment';
+          },
+        }
+      );
+
+      const result = await poster.postSummary(summary);
+      if (result) {
+        const msg = `DevMind: Summary ${result.action} on GitHub PR #${summary.prNumber}`;
+        const open = await vscode.window.showInformationMessage(msg, 'View on GitHub');
+        if (open === 'View on GitHub' && result.commentUrl) {
+          vscode.env.openExternal(vscode.Uri.parse(result.commentUrl));
+        }
+      }
+    },
   };
   const prSummaryPanel = new PRSummaryPanel(prPanelAdapter);
 
+  // Wire regenerate button — re-runs the full pipeline bypassing cache
+  prSummaryPanel.onRegenerate(async (prNumber: number, repoLabel: string) => {
+    const [owner, repo] = repoLabel.split('/');
+    if (!owner || !repo) return;
+    try {
+      const summaryAgent = buildPRSummaryAgent();
+      const result = await summaryAgent.refreshSummary(owner, repo, prNumber);
+      prSummaryPanel.showSummary(result.summary);
+      vscode.window.showInformationMessage(`DevMind: PR #${prNumber} summary regenerated`);
+    } catch (err: any) {
+      prSummaryPanel.showError(prNumber, err.message ?? String(err));
+    }
+  });
+
   // devmind.testPRSummary.loading — shows the loading spinner
   adapter.registerCommand('devmind.testPRSummary.loading', () => {
-    prSummaryPanel.showLoading(42, 'dhruva/devmind');
+    prSummaryPanel.showLoading(76, 'DhRuva-1509/devmind');
   });
 
   // devmind.testPRSummary.success — shows a realistic success state
@@ -1128,10 +1202,10 @@ export function activate(context: vscode.ExtensionContext): void {
       'Linked to #10 (React Query v5 migration epic). Follow-up PR will update `useMutation` calls.';
 
     const testSummary = {
-      id: 'pr-summary-dhruva-devmind-42',
-      owner: 'dhruva',
+      id: 'pr-summary-DhRuva-1509-devmind-76',
+      owner: 'DhRuva-1509',
       repo: 'devmind',
-      prNumber: 42,
+      prNumber: 76,
       prTitle: 'feat: migrate useQuery to v5 syntax',
       prState: 'open',
       summary: testSummaryText,
@@ -1155,18 +1229,251 @@ export function activate(context: vscode.ExtensionContext): void {
         number: 10,
         title: 'React Query v5 migration epic',
         source: 'pr_body',
-        url: 'https://github.com/dhruva/devmind/issues/10',
+        url: 'https://github.com/DhRuva-1509/devmind/issues/10',
       },
       { number: 7, title: 'Upgrade @tanstack/react-query', source: 'branch_name', url: null },
     ]);
   });
 
-  // devmind.testPRSummary.error — shows the error state
   adapter.registerCommand('devmind.testPRSummary.error', () => {
     prSummaryPanel.showError(
-      42,
+      76,
       'Foundry agent unavailable — Azure AI service returned 503. Please try again in a few minutes.'
     );
+  });
+
+  function buildPRSummaryAgent(): PRSummaryAgent {
+    const githubToken = process.env.GITHUB_TOKEN ?? '';
+    const ghClient = new GitHubMCPClient({ token: githubToken });
+
+    const contextAdapter = {
+      async extractContext(owner: string, repo: string, prNumber: number) {
+        const cosmosAdapter = {
+          async read(container: string, id: string) {
+            try {
+              return await (cosmosService as any).read(container, id, `${owner}/${repo}`);
+            } catch {
+              return { success: false };
+            }
+          },
+          async upsert(container: string, item: any) {
+            try {
+              // Inject partitionKey so Cosmos reads can find the document
+              const withPartitionKey = {
+                ...item,
+                partitionKey: item.partitionKey ?? `${owner}/${repo}`,
+              };
+              return await (cosmosService as any).upsert(container, withPartitionKey);
+            } catch {
+              return { success: false };
+            }
+          },
+        } as any;
+
+        const githubAdapter = {
+          async getPR(o: string, r: string, n: number) {
+            return ghClient.getPR(o, r, n);
+          },
+          async getPRDiff(o: string, r: string, n: number) {
+            return ghClient.getPRDiff(o, r, n);
+          },
+          async listPRComments(o: string, r: string, n: number) {
+            return ghClient.listPRComments(o, r, n);
+          },
+        };
+
+        const extractor = new PRContextExtractorService({}, githubAdapter, cosmosAdapter);
+        return extractor.extractContext(owner, repo, prNumber);
+      },
+    };
+
+    const blobAdapter = {
+      async upload(container: string, key: string, content: string) {
+        try {
+          await blobService.uploadBlob(
+            key,
+            content,
+            { contentType: 'application/json' },
+            container
+          );
+          return { success: true };
+        } catch (e: any) {
+          return { success: false, error: e.message };
+        }
+      },
+      async download(container: string, key: string) {
+        try {
+          const result = await (blobService as any).downloadBlob(key, undefined, container);
+          let raw = result?.content ?? result?.data ?? result;
+          let depth = 0;
+          while (raw && typeof raw === 'object' && !Buffer.isBuffer(raw) && depth < 5) {
+            raw = raw.content ?? raw.data ?? raw.body ?? raw.text ?? null;
+            depth++;
+          }
+          const str =
+            raw == null
+              ? undefined
+              : Buffer.isBuffer(raw)
+                ? raw.toString('utf8')
+                : typeof raw === 'string'
+                  ? raw
+                  : JSON.stringify(raw);
+          return { success: true, content: str };
+        } catch {
+          return { success: false };
+        }
+      },
+      async exists(container: string, key: string) {
+        return blobService.blobExists(key, container);
+      },
+      async listKeys(container: string, prefix: string) {
+        return [];
+      },
+    };
+
+    const promptService = new PromptTemplateService({}, blobAdapter);
+    const promptAdapter = {
+      async renderPrompt(context: any) {
+        return promptService.renderPrompt(context);
+      },
+      async renderErrorPrompt(prNumber: number, prUrl: string) {
+        return promptService.renderErrorPrompt(prNumber, prUrl);
+      },
+    };
+
+    const foundryAdapter = {
+      async runAgent(agentId: string, systemPrompt: string, userMessage: string) {
+        const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+        const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+        const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
+        const start = Date.now();
+        const response = await axios.post(
+          url,
+          {
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userMessage },
+            ],
+            temperature: 0.3,
+            max_tokens: 2000,
+          },
+          {
+            headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+            timeout: 60000,
+          }
+        );
+        return {
+          threadId: `direct-${Date.now()}`,
+          content: response.data.choices[0]?.message?.content ?? '',
+          tokenCount: response.data.usage?.total_tokens ?? 0,
+          durationMs: Date.now() - start,
+        };
+      },
+      async isAvailable() {
+        return !!(process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_API_KEY);
+      },
+    };
+
+    const cacheAdapter = {
+      async read<T>(container: string, id: string, partitionKey: string) {
+        try {
+          return (await (cosmosService as any).read(container, id, partitionKey)) as {
+            success: boolean;
+            data?: T;
+          };
+        } catch {
+          return { success: false as const };
+        }
+      },
+      async upsert<T extends { id: string }>(container: string, item: T) {
+        try {
+          const itemWithKey = {
+            ...item,
+            partitionKey:
+              (item as any).owner && (item as any).repo
+                ? `${(item as any).owner}/${(item as any).repo}`
+                : ((item as any).partitionKey ?? 'default'),
+          };
+          return await (cosmosService as any).upsert(container, itemWithKey);
+        } catch {
+          return { success: false };
+        }
+      },
+    };
+
+    return new PRSummaryAgent(
+      {
+        enableCaching: true,
+        enableLogging: true,
+        foundryAgentId: 'devmind-gpt4o',
+        refreshOnUpdate: false,
+      },
+      contextAdapter,
+      promptAdapter,
+      foundryAdapter,
+      cacheAdapter
+    );
+  }
+
+  adapter.registerCommand('devmind.generatePRSummary', async () => {
+    // Ask for owner/repo
+    const repoInput = await vscode.window.showInputBox({
+      prompt: 'Enter GitHub owner/repo (e.g. DhRuva-1509/devmind)',
+      value: 'DhRuva-1509/devmind',
+      placeHolder: 'owner/repo',
+    });
+    if (!repoInput) return;
+
+    const [owner, repo] = repoInput.split('/');
+    if (!owner || !repo) {
+      vscode.window.showErrorMessage('DevMind: Invalid format. Use owner/repo');
+      return;
+    }
+
+    const prInput = await vscode.window.showInputBox({
+      prompt: 'Enter PR number',
+      placeHolder: '76',
+    });
+    if (!prInput) return;
+    const prNumber = parseInt(prInput, 10);
+    if (isNaN(prNumber)) {
+      vscode.window.showErrorMessage('DevMind: Invalid PR number');
+      return;
+    }
+
+    prSummaryPanel.showLoading(prNumber, `${owner}/${repo}`);
+
+    try {
+      const summaryAgent = buildPRSummaryAgent();
+      const result = await summaryAgent.generateSummary(owner, repo, prNumber, 'command');
+      const { summary } = result;
+
+      prSummaryPanel.showSummary(summary);
+
+      if (summary.prNumber) {
+        const ghClient = new GitHubMCPClient({ token: process.env.GITHUB_TOKEN ?? '' });
+        try {
+          const pr = await ghClient.getPR(owner, repo, prNumber);
+          prSummaryPanel.setLinkedIssues(
+            pr.linkedIssues.map((n: number) => ({
+              number: n,
+              title: null,
+              source: 'pr_body',
+              url: `https://github.com/${owner}/${repo}/issues/${n}`,
+            }))
+          );
+        } catch {
+          /* non-fatal */
+        }
+      }
+
+      vscode.window.showInformationMessage(
+        `DevMind: PR #${prNumber} summary generated (${result.fromCache ? 'from cache' : 'fresh'})`
+      );
+    } catch (err: any) {
+      prSummaryPanel.showError(prNumber, err.message ?? String(err));
+      vscode.window.showErrorMessage(`DevMind: Failed to generate summary — ${err.message}`);
+    }
   });
 
   console.log(
