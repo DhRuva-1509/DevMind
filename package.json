@@ -4,13 +4,8 @@
   "publisher": "Dhruva Patil",
   "description": "AI-powered version guard for JavaScript/TypeScript — detects deprecated API usage based on your installed library versions.",
   "version": "0.0.1",
-  "engines": {
-    "vscode": "^1.109.0"
-  },
-  "categories": [
-    "Linters",
-    "Other"
-  ],
+  "engines": { "vscode": "^1.109.0" },
+  "categories": ["Linters", "Other"],
   "activationEvents": [
     "onLanguage:typescript",
     "onLanguage:typescriptreact",
@@ -22,159 +17,49 @@
     "onCommand:devmind.versionGuard.showPanel",
     "onCommand:devmind.openChat",
     "onCommand:devmind.explainConflicts",
-    "onCommand:devmind.explainConflict"
+    "onCommand:devmind.explainConflict",
+    "onCommand:devmind.fixNitpicks"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      {
-        "command": "devmind.helloWorld",
-        "title": "DevMind: Hello World"
-      },
-      {
-        "command": "devmind.versionGuard.analyzeFile",
-        "title": "DevMind: Analyze Current File",
-        "icon": "$(search)"
-      },
-      {
-        "command": "devmind.versionGuard.indexLibrary",
-        "title": "DevMind: Index Library",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "devmind.versionGuard.showPanel",
-        "title": "DevMind: Show Indexed Libraries",
-        "icon": "$(shield)"
-      },
-      {
-        "command": "devmind.versionGuard.refreshPanel",
-        "title": "DevMind: Refresh Panel",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "devmind.versionGuard.toggle",
-        "title": "DevMind: Toggle Version Guard On/Off",
-        "icon": "$(shield-x)"
-      },
-      {
-        "command": "devmind.versionGuard.clearDiagnostics",
-        "title": "DevMind: Clear All Warnings",
-        "icon": "$(clear-all)"
-      },
-      {
-        "command": "devmind.testPRSummary.loading",
-        "title": "DevMind: Test PR Summary - Loading"
-      },
-      {
-        "command": "devmind.testPRSummary.success",
-        "title": "DevMind: Test PR Summary - Success"
-      },
-      {
-        "command": "devmind.testPRSummary.error",
-        "title": "DevMind: Test PR Summary - Error"
-      },
-      {
-        "command": "devmind.generatePRSummary",
-        "title": "DevMind: Generate PR Summary"
-      },
-      {
-        "command": "devmind.openChat",
-        "title": "DevMind: Open Chat",
-        "icon": "$(comment-discussion)"
-      },
-      {
-        "command": "devmind.explainConflicts",
-        "title": "DevMind: Explain Conflicts in File",
-        "icon": "$(search)"
-      },
-      {
-        "command": "devmind.explainConflict",
-        "title": "DevMind: Explain This Conflict"
-      },
-      {
-        "command": "devmind.nextConflict",
-        "title": "DevMind: Next Conflict"
-      },
-      {
-        "command": "devmind.prevConflict",
-        "title": "DevMind: Previous Conflict"
-      }
+      { "command": "devmind.helloWorld", "title": "DevMind: Hello World" },
+      { "command": "devmind.versionGuard.analyzeFile", "title": "DevMind: Analyze Current File", "icon": "$(search)" },
+      { "command": "devmind.versionGuard.indexLibrary", "title": "DevMind: Index Library", "icon": "$(cloud-download)" },
+      { "command": "devmind.versionGuard.showPanel", "title": "DevMind: Show Indexed Libraries", "icon": "$(shield)" },
+      { "command": "devmind.versionGuard.refreshPanel", "title": "DevMind: Refresh Panel", "icon": "$(refresh)" },
+      { "command": "devmind.versionGuard.toggle", "title": "DevMind: Toggle Version Guard On/Off", "icon": "$(shield-x)" },
+      { "command": "devmind.versionGuard.clearDiagnostics", "title": "DevMind: Clear All Warnings", "icon": "$(clear-all)" },
+      { "command": "devmind.testPRSummary.loading", "title": "DevMind: Test PR Summary - Loading" },
+      { "command": "devmind.testPRSummary.success", "title": "DevMind: Test PR Summary - Success" },
+      { "command": "devmind.testPRSummary.error", "title": "DevMind: Test PR Summary - Error" },
+      { "command": "devmind.generatePRSummary", "title": "DevMind: Generate PR Summary" },
+      { "command": "devmind.openChat", "title": "DevMind: Open Chat", "icon": "$(comment-discussion)" },
+      { "command": "devmind.explainConflicts", "title": "DevMind: Explain Conflicts in File", "icon": "$(search)" },
+      { "command": "devmind.explainConflict", "title": "DevMind: Explain This Conflict" },
+      { "command": "devmind.nextConflict", "title": "DevMind: Next Conflict" },
+      { "command": "devmind.prevConflict", "title": "DevMind: Previous Conflict" },
+      { "command": "devmind.fixNitpicks", "title": "DevMind: Fix Nitpicks", "icon": "$(wrench)" }
     ],
     "configuration": {
       "title": "DevMind",
       "properties": {
-        "devmind.versionGuard.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable DevMind Version Guard — detects deprecated API usage based on your installed library versions."
-        },
-        "devmind.versionGuard.minConfidence": {
-          "type": "number",
-          "default": 0.7,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Minimum confidence score (0–1) required to surface a warning. Higher = fewer but more certain warnings."
-        },
-        "devmind.versionGuard.topK": {
-          "type": "number",
-          "default": 8,
-          "minimum": 1,
-          "maximum": 20,
-          "description": "Number of documentation chunks to retrieve per query when analyzing a file."
-        },
-        "devmind.versionGuard.projectId": {
-          "type": "string",
-          "default": "",
-          "description": "Project identifier used to scope documentation indexes. Defaults to workspace folder name if empty."
-        },
-        "devmind.azure.openaiEndpoint": {
-          "type": "string",
-          "default": "",
-          "description": "Azure OpenAI endpoint URL (e.g. https://my-resource.openai.azure.com)"
-        },
-        "devmind.azure.searchEndpoint": {
-          "type": "string",
-          "default": "",
-          "description": "Azure AI Search endpoint URL"
-        },
-        "devmind.azure.keyVaultUrl": {
-          "type": "string",
-          "default": "",
-          "description": "Azure Key Vault URL for secret resolution"
-        }
+        "devmind.versionGuard.enabled": { "type": "boolean", "default": true, "description": "Enable DevMind Version Guard — detects deprecated API usage based on your installed library versions." },
+        "devmind.versionGuard.minConfidence": { "type": "number", "default": 0.7, "minimum": 0, "maximum": 1, "description": "Minimum confidence score (0–1) required to surface a warning. Higher = fewer but more certain warnings." },
+        "devmind.versionGuard.topK": { "type": "number", "default": 8, "minimum": 1, "maximum": 20, "description": "Number of documentation chunks to retrieve per query when analyzing a file." },
+        "devmind.versionGuard.projectId": { "type": "string", "default": "", "description": "Project identifier used to scope documentation indexes. Defaults to workspace folder name if empty." },
+        "devmind.azure.openaiEndpoint": { "type": "string", "default": "", "description": "Azure OpenAI endpoint URL (e.g. https://my-resource.openai.azure.com)" },
+        "devmind.azure.searchEndpoint": { "type": "string", "default": "", "description": "Azure AI Search endpoint URL" },
+        "devmind.azure.keyVaultUrl": { "type": "string", "default": "", "description": "Azure Key Vault URL for secret resolution" }
       }
     },
     "keybindings": [
-      {
-        "command": "devmind.versionGuard.analyzeFile",
-        "key": "ctrl+shift+v",
-        "mac": "cmd+shift+v",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "devmind.openChat",
-        "key": "ctrl+shift+d",
-        "mac": "cmd+shift+d",
-        "when": "editorFocus"
-      },
-      {
-        "command": "devmind.explainConflicts",
-        "key": "ctrl+shift+e",
-        "mac": "cmd+shift+e",
-        "when": "editorFocus"
-      },
-      {
-        "command": "devmind.nextConflict",
-        "key": "alt+]",
-        "mac": "alt+]",
-        "when": "editorFocus"
-      },
-      {
-        "command": "devmind.prevConflict",
-        "key": "alt+[",
-        "mac": "alt+[",
-        "when": "editorFocus"
-      }
+      { "command": "devmind.versionGuard.analyzeFile", "key": "ctrl+shift+v", "mac": "cmd+shift+v", "when": "editorTextFocus" },
+      { "command": "devmind.openChat", "key": "ctrl+shift+d", "mac": "cmd+shift+d", "when": "editorFocus" },
+      { "command": "devmind.explainConflicts", "key": "ctrl+shift+e", "mac": "cmd+shift+e", "when": "editorFocus" },
+      { "command": "devmind.nextConflict", "key": "alt+]", "mac": "alt+]", "when": "editorFocus" },
+      { "command": "devmind.prevConflict", "key": "alt+[", "mac": "alt+[", "when": "editorFocus" },
+      { "command": "devmind.fixNitpicks", "key": "ctrl+shift+n", "mac": "cmd+shift+n", "when": "editorFocus" }
     ]
   },
   "scripts": {

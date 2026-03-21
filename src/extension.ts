@@ -67,10 +67,8 @@ import { PRSummaryAgent } from './services/pr-summary/pr.summary.agent';
 import { PRContextExtractorService } from './services/pr-context/pr.context.service';
 import { PromptTemplateService } from './services/prompt-templates/prompt.template.service';
 
-// CS-040: Routing Agent
 import { RoutingAgentService } from './services/routing/routing.agent.service';
 
-// CS-026: Conflict Explainer UI
 import {
   ConflictCodeLensManager,
   ConflictHoverManager,
@@ -82,6 +80,16 @@ import {
 } from './services/conflict-explainer-ui/conflict.explainer.ui.types';
 import { GitConflictParserService } from './services/conflict-parser/conflict.parser.service';
 import { ConflictExplainerAgent } from './services/conflict-explainer/conflict.explainer.agent';
+
+import { NitpickFixerPanel } from './services/nitpick-fixer-ui/nitpick.fixer.ui';
+import {
+  NitpickPanelAdapter,
+  NitpickPanelWebviewPanel,
+  NitpickPanelMessage,
+  NITPICK_COMMANDS,
+} from './services/nitpick-fixer-ui/nitpick.fixer.ui.types';
+import { NitpickFixerAgent } from './services/nitpick-fixer/nitpick.fixer.agent';
+import { TerminalMCPClient } from './services/mcp/terminal.client';
 
 function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
   return {
@@ -205,7 +213,7 @@ function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
     async withProgress(
       title: string,
       steps: ProgressStep[],
-      task: () => Promise<void>
+      task: () => Promise<void>,
     ): Promise<void> {
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title, cancellable: false },
@@ -214,7 +222,7 @@ function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
             progress.report({ message: step.message, increment: step.increment });
           }
           await task();
-        }
+        },
       );
     },
 
@@ -223,7 +231,7 @@ function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
       edit.replace(
         vscode.Uri.parse(uri),
         new vscode.Range(range.line, range.character, range.endLine, range.endCharacter),
-        newText
+        newText,
       );
       await vscode.workspace.applyEdit(edit);
     },
@@ -291,7 +299,7 @@ function buildDocIndexService(
   openaiService: AzureOpenAIService,
   projectId: string,
   directIndexClient: any,
-  getDirectSearchClient: (indexName: string) => any
+  getDirectSearchClient: (indexName: string) => any,
 ): DocIndexService {
   const searchAdapter: SearchServiceAdapter = {
     async createIndex(name, schema) {
@@ -389,11 +397,7 @@ function buildDocIndexService(
       try {
         const directClient = getDirectSearchClient(indexName);
         if (!directClient) {
-          return {
-            succeeded: 0,
-            failed: docs.length,
-            errors: [{ key: 'all', message: 'No search client' }],
-          };
+          return { succeeded: 0, failed: docs.length, errors: [{ key: 'all', message: 'No search client' }] };
         }
         const result = await directClient.mergeOrUploadDocuments(docs);
         const succeeded = result.results.filter((r: any) => r.succeeded).length;
@@ -406,11 +410,7 @@ function buildDocIndexService(
             .map((r: any) => ({ key: r.key ?? '', message: r.errorMessage ?? '' })),
         };
       } catch (e: any) {
-        return {
-          succeeded: 0,
-          failed: docs.length,
-          errors: [{ key: 'all', message: e.message ?? '' }],
-        };
+        return { succeeded: 0, failed: docs.length, errors: [{ key: 'all', message: e.message ?? '' }] };
       }
     },
     async deleteDocuments(indexName, ids) {
@@ -431,25 +431,14 @@ function buildDocIndexService(
 
         if (vector && Array.isArray(vector) && vector.length > 0) {
           searchOptions.vectorSearchOptions = {
-            queries: [
-              {
-                kind: 'vector',
-                vector,
-                kNearestNeighborsCount: options?.top ?? 8,
-                fields: ['contentVector'],
-              },
-            ],
+            queries: [{ kind: 'vector', vector, kNearestNeighborsCount: options?.top ?? 8, fields: ['contentVector'] }],
           };
         }
 
         const searchText = query && query.trim() ? query : '*';
         const iter = await directClient.search(searchText, searchOptions);
         for await (const result of iter.results) {
-          searchResults.push({
-            document: result.document,
-            score: result.score ?? 0,
-            rerankerScore: result.rerankerScore ?? 0,
-          });
+          searchResults.push({ document: result.document, score: result.score ?? 0, rerankerScore: result.rerankerScore ?? 0 });
         }
         return { results: searchResults, durationMs: Date.now() - start };
       } catch (e: any) {
@@ -459,11 +448,7 @@ function buildDocIndexService(
           const searchResults: any[] = [];
           const iter = await directClient.search(query || '*', { top: options?.top ?? 8 });
           for await (const result of iter.results) {
-            searchResults.push({
-              document: result.document,
-              score: result.score ?? 0,
-              rerankerScore: 0,
-            });
+            searchResults.push({ document: result.document, score: result.score ?? 0, rerankerScore: 0 });
           }
           return { results: searchResults, durationMs: 0 };
         } catch {
@@ -492,7 +477,7 @@ function buildDocIndexService(
         const response = await axios.post(
           url,
           { input: inputTexts },
-          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 30000 }
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 30000 },
         );
         const embeddings: number[][] = response.data.data.map((d: any) => d.embedding);
         return { embeddings };
@@ -503,13 +488,9 @@ function buildDocIndexService(
   };
 
   return new DocIndexService(
-    {
-      indexPrefix: 'devmind',
-      embeddingDimensions: 1536,
-      embeddingDeployment: 'text-embedding-3-small',
-    },
+    { indexPrefix: 'devmind', embeddingDimensions: 1536, embeddingDeployment: 'text-embedding-3-small' },
     searchAdapter,
-    embeddingAdapter
+    embeddingAdapter,
   );
 }
 
@@ -518,7 +499,7 @@ function buildVersionGuardAgent(
   docIndexService: DocIndexService,
   cosmosService: CosmosDBService,
   projectId: string,
-  toggle: FeatureToggleAdapter
+  toggle: FeatureToggleAdapter,
 ): VersionGuardAgent {
   const depParser = new DependencyParserService({ enableLogging: false });
 
@@ -526,9 +507,7 @@ function buildVersionGuardAgent(
     async getLibraryVersion(projectRoot, library) {
       try {
         const result = depParser.parsePackageJson(path.join(projectRoot, 'package.json'));
-        const dep = result.dependencies.find(
-          (d) => d.normalizedName === library || d.name === library
-        );
+        const dep = result.dependencies.find((d) => d.normalizedName === library || d.name === library);
         return dep?.specifier.version ?? null;
       } catch {
         return null;
@@ -538,9 +517,7 @@ function buildVersionGuardAgent(
       try {
         const result = depParser.parsePackageJson(path.join(projectRoot, 'package.json'));
         const map: Record<string, string> = {};
-        result.dependencies.forEach((d) => {
-          map[d.name] = d.specifier.raw;
-        });
+        result.dependencies.forEach((d) => { map[d.name] = d.specifier.raw; });
         return map;
       } catch {
         return {};
@@ -551,15 +528,8 @@ function buildVersionGuardAgent(
   const docSearchAdapter: DocSearchAdapter = {
     async search(pid, query, options) {
       try {
-        const response = await docIndexService.search(pid, query, {
-          library: options.library,
-          topK: options.topK,
-        });
-        return response.results.map((r) => ({
-          content: r.content,
-          sourceUrl: r.sourceUrl,
-          score: r.score,
-        }));
+        const response = await docIndexService.search(pid, query, { library: options.library, topK: options.topK });
+        return response.results.map((r) => ({ content: r.content, sourceUrl: r.sourceUrl, score: r.score }));
       } catch {
         return [];
       }
@@ -584,7 +554,7 @@ function buildVersionGuardAgent(
         const response = await axios.post(
           url,
           { messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 1000 },
-          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 },
         );
         const text = response.data.choices[0]?.message?.content ?? '';
         const clean = text.replace(/```json|```/g, '').trim();
@@ -597,9 +567,7 @@ function buildVersionGuardAgent(
 
   const loggingAdapter: LoggingAdapter = {
     async log(entry) {
-      try {
-        await cosmosService.upsert('telemetry', entry as any);
-      } catch {}
+      try { await cosmosService.upsert('telemetry', entry as any); } catch {}
     },
   };
 
@@ -609,7 +577,7 @@ function buildVersionGuardAgent(
     docSearchAdapter,
     openaiAdapter,
     loggingAdapter,
-    toggle
+    toggle,
   );
 }
 
@@ -621,11 +589,7 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
         responseType: 'text',
         headers: { 'User-Agent': 'DevMind/1.0 Documentation Indexer' },
       });
-      return {
-        status: response.status,
-        data: response.data as string,
-        headers: response.headers as Record<string, string>,
-      };
+      return { status: response.status, data: response.data as string, headers: response.headers as Record<string, string> };
     },
   };
 
@@ -641,11 +605,12 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
   return new DocCrawlerService(
     { enableLogging: true, rateLimitMs: 300, maxDepth: 2, maxPages: 50 },
     httpClient,
-    blobWriter
+    blobWriter,
   );
 }
 
 function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService {
+  // Classifier adapter — direct REST call to GPT-4o (TD-3.2: API key, not DefaultAzureCredential)
   const classifierAdapter = {
     async complete(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
       const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
@@ -661,7 +626,7 @@ function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService 
           temperature: 0.1,
           max_tokens: maxTokens,
         },
-        { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 15000 }
+        { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 15000 },
       );
       return response.data.choices[0]?.message?.content ?? '{}';
     },
@@ -683,7 +648,7 @@ function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService 
   return new RoutingAgentService(
     { enableLogging: true, enableConsoleLogging: true },
     classifierAdapter,
-    loggingAdapter
+    loggingAdapter,
   );
 }
 
@@ -695,15 +660,8 @@ function buildConflictExplainerAgent(cosmosService: CosmosDBService): ConflictEx
       const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
       const response = await axios.post(
         url,
-        {
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: 0.2,
-          max_tokens: maxTokens,
-        },
-        { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
+        { messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], temperature: 0.2, max_tokens: maxTokens },
+        { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 },
       );
       return response.data.choices[0]?.message?.content ?? '{}';
     },
@@ -711,19 +669,147 @@ function buildConflictExplainerAgent(cosmosService: CosmosDBService): ConflictEx
   const loggingAdapter = {
     async log(entry: any): Promise<void> {
       try {
-        await (cosmosService as any).upsert('telemetry', {
-          ...entry,
-          partitionKey: entry.filePath ?? 'conflict',
-        });
-      } catch {
-        /* non-fatal */
-      }
+        await (cosmosService as any).upsert('telemetry', { ...entry, partitionKey: entry.filePath ?? 'conflict' });
+      } catch { /* non-fatal */ }
     },
   };
   return new ConflictExplainerAgent(
     { enableLogging: true, enableConsoleLogging: true, confidenceThreshold: 0.6 },
     openaiAdapter,
-    loggingAdapter
+    loggingAdapter,
+  );
+}
+
+
+function buildNitpickFixerAgent(
+  cwd: string,
+  cosmosService: CosmosDBService,
+  nitpickPanel: NitpickFixerPanel,
+): NitpickFixerAgent {
+  // Terminal MCP client — uses allowlist (git, eslint, prettier, tsc, npm, npx)
+  const terminal = new TerminalMCPClient({ cwd });
+
+  const linterAdapter = {
+    async runAll(_paths: string[], cwdArg: string) {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const allFixes: any[] = [];
+      const results: any[] = [];
+      let totalRemainingIssues = 0;
+
+      const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
+      try {
+        console.log(`[DevMind] Running ESLint --fix in ${cwdArg}`);
+        let eslintRaw = '';
+        try {
+          const r = await execFileAsync(npxBin, ['eslint', 'src', '--fix', '--format', 'json'], { cwd: cwdArg, timeout: 60000 });
+          eslintRaw = r.stdout;
+        } catch (e: any) {
+          eslintRaw = e.stdout ?? '';
+          console.log(`[DevMind] ESLint exit non-zero (expected): ${e.message?.slice(0, 100)}`);
+        }
+        const parsed = eslintRaw ? JSON.parse(eslintRaw) : [];
+        const fixes: any[] = [];
+        let errors = 0;
+        let warnings = 0;
+        for (const file of parsed) {
+          errors += file.errorCount ?? 0;
+          warnings += file.warningCount ?? 0;
+          const fixCount = (file.fixableErrorCount ?? 0) + (file.fixableWarningCount ?? 0);
+          if (fixCount > 0) {
+            fixes.push({ linter: 'eslint' as const, filePath: file.filePath, ruleId: null, description: `Applied ${fixCount} ESLint fix(es)` });
+          }
+        }
+        allFixes.push(...fixes);
+        totalRemainingIssues += errors + warnings;
+        results.push({ linter: 'eslint', success: errors === 0, appliedFixes: fixes, remainingIssues: errors + warnings, raw: eslintRaw, durationMs: 0 });
+        console.log(`[DevMind] ESLint done: ${errors} errors, ${warnings} warnings, ${fixes.length} fixes applied`);
+      } catch (err: any) {
+        console.error(`[DevMind] ESLint failed: ${err.message}`);
+      }
+
+      try {
+        console.log(`[DevMind] Running Prettier --write in ${cwdArg}`);
+        // Check what's unformatted before
+        let checkRaw = '';
+        try {
+          const r = await execFileAsync(npxBin, ['prettier', '--check', 'src'], { cwd: cwdArg, timeout: 30000 });
+          checkRaw = r.stdout + r.stderr;
+        } catch (e: any) {
+          checkRaw = (e.stdout ?? '') + (e.stderr ?? '');
+        }
+        // Apply fixes
+        await execFileAsync(npxBin, ['prettier', '--write', 'src'], { cwd: cwdArg, timeout: 30000 }).catch(() => {});
+        // Parse which files were unformatted
+        const unformatted = checkRaw.split('\n').filter(l => l.includes('[warn]')).map(l => l.replace('[warn] ', '').trim()).filter(Boolean);
+        const fixes = unformatted.map((f: string) => ({ linter: 'prettier' as const, filePath: f, ruleId: null, description: 'Applied Prettier formatting' }));
+        allFixes.push(...fixes);
+        totalRemainingIssues += 0;
+        results.push({ linter: 'prettier', success: true, appliedFixes: fixes, remainingIssues: 0, raw: checkRaw, durationMs: 0 });
+        console.log(`[DevMind] Prettier done: ${fixes.length} files reformatted`);
+      } catch (err: any) {
+        console.error(`[DevMind] Prettier failed: ${err.message}`);
+      }
+
+      if (results.length === 0) {
+        const err: any = new Error(`No linters could run in ${cwdArg}`);
+        err.code = 'NO_LINTERS_DETECTED';
+        err.name = 'NoLintersDetectedError';
+        throw err;
+      }
+
+      return { cwd: cwdArg, results, allFixes, totalRemainingIssues, completedAt: new Date().toISOString(), durationMs: 0 };
+    },
+  };
+
+  // GitAdapter wrapping TerminalMCPClient
+  const gitAdapter = {
+    async getDiff(cwdArg: string): Promise<string> {
+      const result = await terminal.gitDiff(cwdArg);
+      return result.raw;
+    },
+    async stageAll(cwdArg: string): Promise<void> {
+      await terminal.execute('git', ['add', '-A'], cwdArg);
+    },
+    async commit(message: string, cwdArg: string): Promise<string> {
+      await terminal.execute('git', ['commit', '-m', message], cwdArg);
+      return message;
+    },
+    async getLastCommitSha(cwdArg: string): Promise<string> {
+      const log = await terminal.gitLog(1, cwdArg);
+      return log[0]?.shortHash ?? 'unknown';
+    },
+  };
+
+  const confirmAdapter = {
+    async confirm(diff: any, summary: string): Promise<boolean> {
+      return new Promise((resolve) => {
+        nitpickPanel.showConfirming(diff, summary, 0);
+        nitpickPanel.onAccept((_selectedFiles, _commitMessage) => resolve(true));
+        nitpickPanel.onReject(() => resolve(false));
+      });
+    },
+  };
+
+  const loggingAdapter = {
+    async log(entry: any): Promise<void> {
+      try {
+        await (cosmosService as any).upsert('telemetry', {
+          ...entry,
+          partitionKey: entry.cwd ?? 'nitpick',
+        });
+      } catch { /* non-fatal */ }
+    },
+  };
+
+  return new NitpickFixerAgent(
+    { cwd, autoCommitEnabled: true, stageAll: true, enableLogging: true, enableConsoleLogging: true },
+    linterAdapter,
+    gitAdapter,
+    confirmAdapter,
+    loggingAdapter,
   );
 }
 
@@ -733,51 +819,15 @@ const LIBRARY_DOCS: Record<string, { url: string; description: string }> = {
     description:
       'TanStack Query (React Query) v5 breaking changes: useQuery now requires object argument with queryKey and queryFn properties. The array+function syntax useQuery([key], fn) is removed in v5. Use useQuery({ queryKey: [key], queryFn: fn }) instead. useMutation({ mutationFn }). useInfiniteQuery({ queryKey, queryFn, getNextPageParam }). QueryClient methods unchanged.',
   },
-  react: {
-    url: 'https://react.dev/learn',
-    description:
-      'React is a JavaScript library for building user interfaces. Key hooks: useState, useEffect, useContext, useRef, useMemo, useCallback, useReducer. React 18 introduced concurrent features.',
-  },
-  nextjs: {
-    url: 'https://nextjs.org/docs',
-    description:
-      'Next.js is a React framework for production. App Router uses Server Components by default. Pages Router uses getServerSideProps, getStaticProps, getStaticPaths.',
-  },
-  vue: {
-    url: 'https://vuejs.org/guide',
-    description:
-      'Vue.js is a progressive JavaScript framework. Composition API uses setup(), ref(), reactive(), computed(), watch(). Options API uses data(), methods, computed, watch.',
-  },
-  express: {
-    url: 'https://expressjs.com/en/guide',
-    description:
-      'Express is a Node.js web framework. Use app.get(), app.post(), app.use() for routing. Middleware runs in order. req, res, next pattern.',
-  },
-  fastify: {
-    url: 'https://fastify.dev/docs/latest',
-    description:
-      'Fastify is a fast Node.js web framework. Uses schema-based validation, plugins, decorators. fastify.get(), fastify.post(), fastify.register().',
-  },
-  prisma: {
-    url: 'https://www.prisma.io/docs',
-    description:
-      'Prisma is a Node.js ORM. PrismaClient for database access. prisma.model.findMany(), findUnique(), create(), update(), delete(), upsert().',
-  },
-  drizzle: {
-    url: 'https://orm.drizzle.team/docs',
-    description:
-      'Drizzle ORM is a TypeScript ORM. Uses schema definition, db.select(), db.insert(), db.update(), db.delete(). Works with PostgreSQL, MySQL, SQLite.',
-  },
-  zod: {
-    url: 'https://zod.dev',
-    description:
-      'Zod is a TypeScript schema validation library. z.string(), z.number(), z.object(), z.array(), z.union(), z.parse(), z.safeParse().',
-  },
-  typescript: {
-    url: 'https://www.typescriptlang.org/docs',
-    description:
-      'TypeScript adds static types to JavaScript. Interfaces, types, generics, enums, decorators, utility types: Partial, Required, Pick, Omit, Record, Readonly.',
-  },
+  react: { url: 'https://react.dev/learn', description: 'React is a JavaScript library for building user interfaces. Key hooks: useState, useEffect, useContext, useRef, useMemo, useCallback, useReducer. React 18 introduced concurrent features.' },
+  nextjs: { url: 'https://nextjs.org/docs', description: 'Next.js is a React framework for production. App Router uses Server Components by default. Pages Router uses getServerSideProps, getStaticProps, getStaticPaths.' },
+  vue: { url: 'https://vuejs.org/guide', description: 'Vue.js is a progressive JavaScript framework. Composition API uses setup(), ref(), reactive(), computed(), watch(). Options API uses data(), methods, computed, watch.' },
+  express: { url: 'https://expressjs.com/en/guide', description: 'Express is a Node.js web framework. Use app.get(), app.post(), app.use() for routing. Middleware runs in order. req, res, next pattern.' },
+  fastify: { url: 'https://fastify.dev/docs/latest', description: 'Fastify is a fast Node.js web framework. Uses schema-based validation, plugins, decorators. fastify.get(), fastify.post(), fastify.register().' },
+  prisma: { url: 'https://www.prisma.io/docs', description: 'Prisma is a Node.js ORM. PrismaClient for database access. prisma.model.findMany(), findUnique(), create(), update(), delete(), upsert().' },
+  drizzle: { url: 'https://orm.drizzle.team/docs', description: 'Drizzle ORM is a TypeScript ORM. Uses schema definition, db.select(), db.insert(), db.update(), db.delete(). Works with PostgreSQL, MySQL, SQLite.' },
+  zod: { url: 'https://zod.dev', description: 'Zod is a TypeScript schema validation library. z.string(), z.number(), z.object(), z.array(), z.union(), z.parse(), z.safeParse().' },
+  typescript: { url: 'https://www.typescriptlang.org/docs', description: 'TypeScript adds static types to JavaScript. Interfaces, types, generics, enums, decorators, utility types: Partial, Required, Pick, Omit, Record, Readonly.' },
 };
 
 async function fetchAndChunkDocs(library: string, projectId: string): Promise<any[]> {
@@ -1076,19 +1126,15 @@ export function activate(context: vscode.ExtensionContext): void {
     openaiService,
     projectId,
     directSearchIndexClient,
-    getDirectSearchClient
+    getDirectSearchClient,
   );
-  const agent = buildVersionGuardAgent(
-    openaiService,
-    docIndexService,
-    cosmosService,
-    projectId,
-    toggle
-  );
+  const agent = buildVersionGuardAgent(openaiService, docIndexService, cosmosService, projectId, toggle);
   const crawler = buildDocCrawler(blobService);
 
   const routingAgent = buildRoutingAgent(cosmosService);
 
+  // ── Status bar — clicking opens DevMind Chat (CS-040 entry point) ──────────
+  // Build it manually so we can set command to devmind.openChat
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.text = '$(robot) DevMind';
   statusBarItem.tooltip = 'DevMind — click to open chat';
@@ -1102,33 +1148,15 @@ export function activate(context: vscode.ExtensionContext): void {
     ...adapter,
     createStatusBarItem(): StatusBarItem {
       return {
-        get text() {
-          return vgStatusBarReal.text;
-        },
-        set text(v) {
-          vgStatusBarReal.text = v;
-        },
-        get tooltip() {
-          return typeof vgStatusBarReal.tooltip === 'string' ? vgStatusBarReal.tooltip : '';
-        },
-        set tooltip(v) {
-          vgStatusBarReal.tooltip = v;
-        },
-        get command() {
-          return typeof vgStatusBarReal.command === 'string' ? vgStatusBarReal.command : undefined;
-        },
-        set command(v) {
-          vgStatusBarReal.command = v;
-        },
-        show() {
-          vgStatusBarReal.show();
-        },
-        hide() {
-          vgStatusBarReal.hide();
-        },
-        dispose() {
-          vgStatusBarReal.dispose();
-        },
+        get text() { return vgStatusBarReal.text; },
+        set text(v) { vgStatusBarReal.text = v; },
+        get tooltip() { return typeof vgStatusBarReal.tooltip === 'string' ? vgStatusBarReal.tooltip : ''; },
+        set tooltip(v) { vgStatusBarReal.tooltip = v; },
+        get command() { return typeof vgStatusBarReal.command === 'string' ? vgStatusBarReal.command : undefined; },
+        set command(v) { vgStatusBarReal.command = v; },
+        show() { vgStatusBarReal.show(); },
+        hide() { vgStatusBarReal.hide(); },
+        dispose() { vgStatusBarReal.dispose(); },
       };
     },
   };
@@ -1160,8 +1188,8 @@ export function activate(context: vscode.ExtensionContext): void {
             return action;
           });
         },
-      }
-    )
+      },
+    ),
   );
 
   const handlers: CommandHandlers = {
@@ -1212,9 +1240,7 @@ export function activate(context: vscode.ExtensionContext): void {
           });
           statusBar.setReady(result.warnings.length);
           if (result.warnings.length > 0) {
-            adapter.showWarningMessage(
-              `DevMind: ${result.warnings.length} version issue${result.warnings.length === 1 ? '' : 's'} found. See Problems panel.`
-            );
+            adapter.showWarningMessage(`DevMind: ${result.warnings.length} version issue${result.warnings.length === 1 ? '' : 's'} found. See Problems panel.`);
           } else {
             adapter.showInformationMessage('DevMind: No version issues found.');
           }
@@ -1228,16 +1254,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     async indexLibrary(): Promise<void> {
       const library = await adapter.showQuickPick([
-        'react-query',
-        'react',
-        'nextjs',
-        'vue',
-        'express',
-        'fastify',
-        'prisma',
-        'drizzle',
-        'zod',
-        'typescript',
+        'react-query', 'react', 'nextjs', 'vue', 'express',
+        'fastify', 'prisma', 'drizzle', 'zod', 'typescript',
       ]);
       if (!library) return;
       statusBar.setIndexing(library);
@@ -1246,19 +1264,14 @@ export function activate(context: vscode.ExtensionContext): void {
           const chunks = await fetchAndChunkDocs(library, projectId);
           const indexResult = await docIndexService.indexChunks(projectId, library, chunks);
           statusBar.setReady(0);
-          adapter.showInformationMessage(
-            `DevMind: ${library} indexed — ${indexResult.chunksIndexed} chunks stored in Azure Search.`
-          );
+          adapter.showInformationMessage(`DevMind: ${library} indexed — ${indexResult.chunksIndexed} chunks stored in Azure Search.`);
           if (panel.isOpen()) {
             const usage = await docIndexService.getStorageUsage(projectId);
             panel.update({
               projectId,
               libraries: usage.indexes.map((i) => ({
-                name: i.library,
-                version: 'latest',
-                documentCount: i.documentCount,
-                storageBytes: i.storageBytes,
-                status: 'indexed' as const,
+                name: i.library, version: 'latest', documentCount: i.documentCount,
+                storageBytes: i.storageBytes, status: 'indexed' as const,
                 lastIndexed: new Date().toISOString(),
               })),
               totalDocuments: usage.totalDocuments,
@@ -1280,11 +1293,8 @@ export function activate(context: vscode.ExtensionContext): void {
         panel.show({
           projectId,
           libraries: usage.indexes.map((i) => ({
-            name: i.library,
-            version: 'latest',
-            documentCount: i.documentCount,
-            storageBytes: i.storageBytes,
-            status: 'indexed' as const,
+            name: i.library, version: 'latest', documentCount: i.documentCount,
+            storageBytes: i.storageBytes, status: 'indexed' as const,
             lastIndexed: new Date().toISOString(),
           })),
           totalDocuments: usage.totalDocuments,
@@ -1302,11 +1312,8 @@ export function activate(context: vscode.ExtensionContext): void {
         const state = {
           projectId,
           libraries: usage.indexes.map((i) => ({
-            name: i.library,
-            version: 'latest',
-            documentCount: i.documentCount,
-            storageBytes: i.storageBytes,
-            status: 'indexed' as const,
+            name: i.library, version: 'latest', documentCount: i.documentCount,
+            storageBytes: i.storageBytes, status: 'indexed' as const,
             lastIndexed: new Date().toISOString(),
           })),
           totalDocuments: usage.totalDocuments,
@@ -1321,9 +1328,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     toggleFeature(): void {
       const enabled = (adapter.getConfiguration('versionGuard.enabled') as boolean) ?? true;
-      vscode.workspace
-        .getConfiguration('devmind')
-        .update('versionGuard.enabled', !enabled, vscode.ConfigurationTarget.Global);
+      vscode.workspace.getConfiguration('devmind').update('versionGuard.enabled', !enabled, vscode.ConfigurationTarget.Global);
       if (enabled) {
         statusBar.setDisabled();
         adapter.showInformationMessage('DevMind Version Guard: Disabled.');
@@ -1359,33 +1364,19 @@ export function activate(context: vscode.ExtensionContext): void {
         retainContextWhenHidden: true,
       });
       return {
-        get html() {
-          return p.webview.html;
-        },
-        set html(v: string) {
-          p.webview.html = v;
-        },
-        reveal() {
-          p.reveal(vscode.ViewColumn.Beside);
-        },
-        dispose() {
-          p.dispose();
-        },
-        postMessage(msg: unknown) {
-          p.webview.postMessage(msg);
-        },
-        onDidDispose(cb: () => void) {
-          p.onDidDispose(cb);
-        },
-        onDidReceiveMessage(cb: (msg: PanelMessage) => void) {
-          p.webview.onDidReceiveMessage(cb);
-        },
+        get html() { return p.webview.html; },
+        set html(v: string) { p.webview.html = v; },
+        reveal() { p.reveal(vscode.ViewColumn.Beside); },
+        dispose() { p.dispose(); },
+        postMessage(msg: unknown) { p.webview.postMessage(msg); },
+        onDidDispose(cb: () => void) { p.onDidDispose(cb); },
+        onDidReceiveMessage(cb: (msg: PanelMessage) => void) { p.webview.onDidReceiveMessage(cb); },
       };
     },
     showInformationMessage: (msg: string) => vscode.window.showInformationMessage(msg),
-    showErrorMessage: (msg: string) => vscode.window.showErrorMessage(msg),
-    openExternal: (url: string) => vscode.env.openExternal(vscode.Uri.parse(url)),
-    writeClipboard: (text: string) => vscode.env.clipboard.writeText(text),
+    showErrorMessage:       (msg: string) => vscode.window.showErrorMessage(msg),
+    openExternal:           (url: string) => vscode.env.openExternal(vscode.Uri.parse(url)),
+    writeClipboard:         (text: string) => vscode.env.clipboard.writeText(text),
     registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
       context.subscriptions.push(vscode.commands.registerCommand(id, handler));
     },
@@ -1415,13 +1406,11 @@ export function activate(context: vscode.ExtensionContext): void {
         {
           async confirm(message: string, detail?: string): Promise<boolean> {
             const choice = await vscode.window.showInformationMessage(
-              message,
-              { modal: true, detail: detail ?? '' },
-              'Post Comment'
+              message, { modal: true, detail: detail ?? '' }, 'Post Comment',
             );
             return choice === 'Post Comment';
           },
-        }
+        },
       );
       const result = await poster.postSummary(summary);
       if (result) {
@@ -1468,41 +1457,25 @@ export function activate(context: vscode.ExtensionContext): void {
 
     prSummaryPanel.showSummary({
       id: 'pr-summary-DhRuva-1509-devmind-76',
-      owner: 'DhRuva-1509',
-      repo: 'devmind',
-      prNumber: 76,
-      prTitle: 'feat: migrate useQuery to v5 syntax',
-      prState: 'open',
-      summary: testSummaryText,
-      chunkSummaries: [] as any[],
-      wasChunked: false,
-      foundryAgentId: 'agent-devmind-01',
-      foundryThreadId: 'thread-abc123',
-      templateVersion: '1.0.0',
-      abVariant: null as string | null,
-      status: 'complete' as const,
-      errorMessage: null as string | null,
+      owner: 'DhRuva-1509', repo: 'devmind', prNumber: 76,
+      prTitle: 'feat: migrate useQuery to v5 syntax', prState: 'open',
+      summary: testSummaryText, chunkSummaries: [] as any[], wasChunked: false,
+      foundryAgentId: 'agent-devmind-01', foundryThreadId: 'thread-abc123',
+      templateVersion: '1.0.0', abVariant: null as string | null,
+      status: 'complete' as const, errorMessage: null as string | null,
       trigger: 'command' as const,
       generatedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
       prUpdatedAt: new Date().toISOString(),
     });
     prSummaryPanel.setLinkedIssues([
-      {
-        number: 10,
-        title: 'React Query v5 migration epic',
-        source: 'pr_body',
-        url: 'https://github.com/DhRuva-1509/devmind/issues/10',
-      },
+      { number: 10, title: 'React Query v5 migration epic', source: 'pr_body', url: 'https://github.com/DhRuva-1509/devmind/issues/10' },
       { number: 7, title: 'Upgrade @tanstack/react-query', source: 'branch_name', url: null },
     ]);
   });
 
   adapter.registerCommand('devmind.testPRSummary.error', () => {
-    prSummaryPanel.showError(
-      76,
-      'Foundry agent unavailable — Azure AI service returned 503. Please try again in a few minutes.'
-    );
+    prSummaryPanel.showError(76, 'Foundry agent unavailable — Azure AI service returned 503. Please try again in a few minutes.');
   });
 
   function buildPRSummaryAgent(): PRSummaryAgent {
@@ -1513,33 +1486,21 @@ export function activate(context: vscode.ExtensionContext): void {
       async extractContext(owner: string, repo: string, prNumber: number) {
         const cosmosAdapter = {
           async read(container: string, id: string) {
-            try {
-              return await (cosmosService as any).read(container, id, `${owner}/${repo}`);
-            } catch {
-              return { success: false };
-            }
+            try { return await (cosmosService as any).read(container, id, `${owner}/${repo}`); }
+            catch { return { success: false }; }
           },
           async upsert(container: string, item: any) {
             try {
               return await (cosmosService as any).upsert(container, {
-                ...item,
-                partitionKey: item.partitionKey ?? `${owner}/${repo}`,
+                ...item, partitionKey: item.partitionKey ?? `${owner}/${repo}`,
               });
-            } catch {
-              return { success: false };
-            }
+            } catch { return { success: false }; }
           },
         } as any;
         const githubAdapter = {
-          async getPR(o: string, r: string, n: number) {
-            return ghClient.getPR(o, r, n);
-          },
-          async getPRDiff(o: string, r: string, n: number) {
-            return ghClient.getPRDiff(o, r, n);
-          },
-          async listPRComments(o: string, r: string, n: number) {
-            return ghClient.listPRComments(o, r, n);
-          },
+          async getPR(o: string, r: string, n: number) { return ghClient.getPR(o, r, n); },
+          async getPRDiff(o: string, r: string, n: number) { return ghClient.getPRDiff(o, r, n); },
+          async listPRComments(o: string, r: string, n: number) { return ghClient.listPRComments(o, r, n); },
         };
         const extractor = new PRContextExtractorService({}, githubAdapter, cosmosAdapter);
         return extractor.extractContext(owner, repo, prNumber);
@@ -1548,17 +1509,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const blobAdapter = {
       async upload(container: string, key: string, content: string) {
-        try {
-          await blobService.uploadBlob(
-            key,
-            content,
-            { contentType: 'application/json' },
-            container
-          );
-          return { success: true };
-        } catch (e: any) {
-          return { success: false, error: e.message };
-        }
+        try { await blobService.uploadBlob(key, content, { contentType: 'application/json' }, container); return { success: true }; }
+        catch (e: any) { return { success: false, error: e.message }; }
       },
       async download(container: string, key: string) {
         try {
@@ -1569,35 +1521,21 @@ export function activate(context: vscode.ExtensionContext): void {
             raw = raw.content ?? raw.data ?? raw.body ?? raw.text ?? null;
             depth++;
           }
-          const str =
-            raw == null
-              ? undefined
-              : Buffer.isBuffer(raw)
-                ? raw.toString('utf8')
-                : typeof raw === 'string'
-                  ? raw
-                  : JSON.stringify(raw);
+          const str = raw == null ? undefined
+            : Buffer.isBuffer(raw) ? raw.toString('utf8')
+            : typeof raw === 'string' ? raw
+            : JSON.stringify(raw);
           return { success: true, content: str };
-        } catch {
-          return { success: false };
-        }
+        } catch { return { success: false }; }
       },
-      async exists(container: string, key: string) {
-        return blobService.blobExists(key, container);
-      },
-      async listKeys(_container: string, _prefix: string) {
-        return [];
-      },
+      async exists(container: string, key: string) { return blobService.blobExists(key, container); },
+      async listKeys(_container: string, _prefix: string) { return []; },
     };
 
     const promptService = new PromptTemplateService({}, blobAdapter);
     const promptAdapter = {
-      async renderPrompt(context: any) {
-        return promptService.renderPrompt(context);
-      },
-      async renderErrorPrompt(prNumber: number, prUrl: string) {
-        return promptService.renderErrorPrompt(prNumber, prUrl);
-      },
+      async renderPrompt(context: any) { return promptService.renderPrompt(context); },
+      async renderErrorPrompt(prNumber: number, prUrl: string) { return promptService.renderErrorPrompt(prNumber, prUrl); },
     };
 
     const foundryAdapter = {
@@ -1608,15 +1546,8 @@ export function activate(context: vscode.ExtensionContext): void {
         const start = Date.now();
         const response = await axios.post(
           url,
-          {
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userMessage },
-            ],
-            temperature: 0.3,
-            max_tokens: 2000,
-          },
-          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
+          { messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }], temperature: 0.3, max_tokens: 2000 },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 },
         );
         return {
           threadId: `direct-${Date.now()}`,
@@ -1632,41 +1563,24 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const cacheAdapter = {
       async read<T>(container: string, id: string, partitionKey: string) {
-        try {
-          return (await (cosmosService as any).read(container, id, partitionKey)) as {
-            success: boolean;
-            data?: T;
-          };
-        } catch {
-          return { success: false as const };
-        }
+        try { return (await (cosmosService as any).read(container, id, partitionKey)) as { success: boolean; data?: T }; }
+        catch { return { success: false as const }; }
       },
       async upsert<T extends { id: string }>(container: string, item: T) {
         try {
           return await (cosmosService as any).upsert(container, {
             ...item,
-            partitionKey:
-              (item as any).owner && (item as any).repo
-                ? `${(item as any).owner}/${(item as any).repo}`
-                : ((item as any).partitionKey ?? 'default'),
+            partitionKey: (item as any).owner && (item as any).repo
+              ? `${(item as any).owner}/${(item as any).repo}`
+              : ((item as any).partitionKey ?? 'default'),
           });
-        } catch {
-          return { success: false };
-        }
+        } catch { return { success: false }; }
       },
     };
 
     return new PRSummaryAgent(
-      {
-        enableCaching: true,
-        enableLogging: true,
-        foundryAgentId: 'devmind-gpt4o',
-        refreshOnUpdate: false,
-      },
-      contextAdapter,
-      promptAdapter,
-      foundryAdapter,
-      cacheAdapter
+      { enableCaching: true, enableLogging: true, foundryAgentId: 'devmind-gpt4o', refreshOnUpdate: false },
+      contextAdapter, promptAdapter, foundryAdapter, cacheAdapter,
     );
   }
 
@@ -1678,21 +1592,12 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     if (!repoInput) return;
     const [owner, repo] = repoInput.split('/');
-    if (!owner || !repo) {
-      vscode.window.showErrorMessage('DevMind: Invalid format. Use owner/repo');
-      return;
-    }
+    if (!owner || !repo) { vscode.window.showErrorMessage('DevMind: Invalid format. Use owner/repo'); return; }
 
-    const prInput = await vscode.window.showInputBox({
-      prompt: 'Enter PR number',
-      placeHolder: '76',
-    });
+    const prInput = await vscode.window.showInputBox({ prompt: 'Enter PR number', placeHolder: '76' });
     if (!prInput) return;
     const prNumber = parseInt(prInput, 10);
-    if (isNaN(prNumber)) {
-      vscode.window.showErrorMessage('DevMind: Invalid PR number');
-      return;
-    }
+    if (isNaN(prNumber)) { vscode.window.showErrorMessage('DevMind: Invalid PR number'); return; }
 
     prSummaryPanel.showLoading(prNumber, `${owner}/${repo}`);
     try {
@@ -1705,26 +1610,19 @@ export function activate(context: vscode.ExtensionContext): void {
           const pr = await ghClient.getPR(owner, repo, prNumber);
           prSummaryPanel.setLinkedIssues(
             pr.linkedIssues.map((n: number) => ({
-              number: n,
-              title: null,
-              source: 'pr_body',
+              number: n, title: null, source: 'pr_body',
               url: `https://github.com/${owner}/${repo}/issues/${n}`,
-            }))
+            })),
           );
-        } catch {
-          /* non-fatal */
-        }
+        } catch { /* non-fatal */ }
       }
-      vscode.window.showInformationMessage(
-        `DevMind: PR #${prNumber} summary generated (${result.fromCache ? 'from cache' : 'fresh'})`
-      );
+      vscode.window.showInformationMessage(`DevMind: PR #${prNumber} summary generated (${result.fromCache ? 'from cache' : 'fresh'})`);
     } catch (err: any) {
       prSummaryPanel.showError(prNumber, err.message ?? String(err));
       vscode.window.showErrorMessage(`DevMind: Failed to generate summary — ${err.message}`);
     }
   });
 
-  // ── CS-026: Conflict Explainer UI ──────────────────────────────────────────
   const conflictParser = new GitConflictParserService();
   const conflictCodeLens = new ConflictCodeLensManager();
   const conflictHover = new ConflictHoverManager();
@@ -1736,27 +1634,13 @@ export function activate(context: vscode.ExtensionContext): void {
         retainContextWhenHidden: true,
       });
       return {
-        get html() {
-          return p.webview.html;
-        },
-        set html(v: string) {
-          p.webview.html = v;
-        },
-        reveal() {
-          p.reveal(vscode.ViewColumn.Beside);
-        },
-        dispose() {
-          p.dispose();
-        },
-        postMessage(msg: unknown) {
-          p.webview.postMessage(msg);
-        },
-        onDidDispose(cb: () => void) {
-          p.onDidDispose(cb);
-        },
-        onDidReceiveMessage(cb: any) {
-          p.webview.onDidReceiveMessage(cb);
-        },
+        get html() { return p.webview.html; },
+        set html(v: string) { p.webview.html = v; },
+        reveal() { p.reveal(vscode.ViewColumn.Beside); },
+        dispose() { p.dispose(); },
+        postMessage(msg: unknown) { p.webview.postMessage(msg); },
+        onDidDispose(cb: () => void) { p.onDidDispose(cb); },
+        onDidReceiveMessage(cb: any) { p.webview.onDidReceiveMessage(cb); },
       };
     },
     showInformationMessage: (msg: string) => vscode.window.showInformationMessage(msg),
@@ -1768,6 +1652,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const conflictPanel = new ConflictExplainerPanel(conflictPanelAdapter);
 
+  // CodeLens: "🔍 DevMind: Explain all N conflicts" above every <<<<<<< marker
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       { pattern: '**/*' },
@@ -1785,35 +1670,29 @@ export function activate(context: vscode.ExtensionContext): void {
             });
           });
         },
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(
       { pattern: '**/*' },
       {
-        provideHover(
-          document: vscode.TextDocument,
-          position: vscode.Position
-        ): vscode.Hover | null {
+        provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | null {
           const uri = document.uri.toString();
           const content = document.getText();
           const entry = conflictHover.provideHover(uri, position.line, content);
           if (!entry) return null;
           return new vscode.Hover(new vscode.MarkdownString(entry.markdownContent));
         },
-      }
-    )
+      },
+    ),
   );
 
   adapter.registerCommand(CONFLICT_COMMANDS.EXPLAIN_FILE, async (...args: unknown[]) => {
     const uri = args[0] as string | undefined;
     const doc = vscode.window.activeTextEditor?.document;
-    if (!doc) {
-      vscode.window.showWarningMessage('DevMind: No active file.');
-      return;
-    }
+    if (!doc) { vscode.window.showWarningMessage('DevMind: No active file.'); return; }
     const filePath = uri ?? doc.uri.toString();
     const content = doc.getText();
     const { context: parseCtx, hasConflicts } = conflictParser.parse(filePath, content);
@@ -1840,10 +1719,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }));
       displays.forEach((d) => conflictHover.storeExplanation(filePath, d));
       conflictPanel.showExplanations(filePath, displays);
-      const statusMsg =
-        result.status === 'complete'
-          ? `DevMind: ${displays.length} conflict${displays.length === 1 ? '' : 's'} explained.`
-          : `DevMind: ${result.successCount}/${result.successCount + result.failureCount} conflicts explained (${result.status}).`;
+      const statusMsg = result.status === 'complete'
+        ? `DevMind: ${displays.length} conflict${displays.length === 1 ? '' : 's'} explained.`
+        : `DevMind: ${result.successCount}/${result.successCount + result.failureCount} conflicts explained (${result.status}).`;
       vscode.window.showInformationMessage(statusMsg);
     } catch (err: any) {
       conflictPanel.showError(filePath, err.message ?? String(err));
@@ -1860,6 +1738,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // devmind.nextConflict / devmind.prevConflict — keyboard navigation
   adapter.registerCommand(CONFLICT_COMMANDS.NEXT_CONFLICT, () => {
     const idx = (conflictPanel as any).state?.currentIndex;
     conflictPanel.navigateTo((typeof idx === 'number' ? idx : 0) + 1);
@@ -1869,65 +1748,138 @@ export function activate(context: vscode.ExtensionContext): void {
     conflictPanel.navigateTo((typeof idx === 'number' ? idx : 0) - 1);
   });
 
+  const nitpickPanelAdapter: NitpickPanelAdapter = {
+    createWebviewPanel(viewType: string, title: string): NitpickPanelWebviewPanel {
+      const p = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      });
+      return {
+        get html() { return p.webview.html; },
+        set html(v: string) { p.webview.html = v; },
+        reveal() { p.reveal(vscode.ViewColumn.Beside); },
+        dispose() { p.dispose(); },
+        postMessage(msg: unknown) { p.webview.postMessage(msg); },
+        onDidDispose(cb: () => void) { p.onDidDispose(cb); },
+        onDidReceiveMessage(cb: (msg: NitpickPanelMessage) => void) {
+          p.webview.onDidReceiveMessage(cb);
+        },
+      };
+    },
+    showInformationMessage: (msg: string) => vscode.window.showInformationMessage(msg),
+    showErrorMessage: (msg: string) => vscode.window.showErrorMessage(msg),
+    registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
+      context.subscriptions.push(vscode.commands.registerCommand(id, handler));
+    },
+  };
+
+  const nitpickPanel = new NitpickFixerPanel(nitpickPanelAdapter);
+
+  adapter.registerCommand(NITPICK_COMMANDS.FIX_NITPICKS, async () => {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    nitpickPanel.showRunning('Running linters…');
+
+    try {
+      const nitpickAgent = buildNitpickFixerAgent(cwd, cosmosService, nitpickPanel);
+
+      // Wire Re-run to restart the full flow
+      nitpickPanel.onRerun(async () => {
+        await vscode.commands.executeCommand(NITPICK_COMMANDS.FIX_NITPICKS);
+      });
+
+      const result = await nitpickAgent.run('command', cwd);
+
+      switch (result.status) {
+        case 'clean':
+          nitpickPanel.showClean(result.summary);
+          vscode.window.showInformationMessage(`DevMind: ${result.summary}`);
+          break;
+        case 'committed':
+          nitpickPanel.showSuccess(result);
+          vscode.window.showInformationMessage(
+            `DevMind: ${result.appliedFixes.length} fix${result.appliedFixes.length === 1 ? '' : 'es'} committed — ${result.commitSha}`,
+          );
+          break;
+        case 'fixed':
+          nitpickPanel.showSuccess(result);
+          vscode.window.showInformationMessage(`DevMind: Fixes applied (auto-commit disabled).`);
+          break;
+        case 'rejected':
+          nitpickPanel.showSuccess(result);
+          vscode.window.showInformationMessage('DevMind: Nitpick fixes rejected — no changes applied.');
+          break;
+        case 'no_linters':
+          nitpickPanel.showError(result.errorMessage ?? 'No linters detected in this project.');
+          vscode.window.showWarningMessage('DevMind: No linters detected. Add .eslintrc or .prettierrc.');
+          break;
+        case 'failed':
+          nitpickPanel.showError(result.errorMessage ?? 'Nitpick fixer failed.');
+          vscode.window.showErrorMessage(`DevMind: Nitpick fixer failed — ${result.errorMessage}`);
+          break;
+      }
+    } catch (err: any) {
+      nitpickPanel.showError(err.message ?? String(err));
+      vscode.window.showErrorMessage(`DevMind: Nitpick fixer failed — ${err.message}`);
+    }
+  });
+
   adapter.registerCommand('devmind.openChat', async () => {
     const chatWebviewPanel = vscode.window.createWebviewPanel(
       'devmind.chat',
       'DevMind Chat',
       vscode.ViewColumn.Beside,
-      { enableScripts: true, retainContextWhenHidden: true }
+      { enableScripts: true, retainContextWhenHidden: true },
     );
     chatWebviewPanel.webview.html = buildChatHtml(routingAgent.buildHelpMessage());
 
-    chatWebviewPanel.webview.onDidReceiveMessage(async (msg: { command: string; text: string }) => {
-      if (msg.command !== 'send' || !msg.text?.trim()) return;
+    chatWebviewPanel.webview.onDidReceiveMessage(
+      async (msg: { command: string; text: string }) => {
+        if (msg.command !== 'send' || !msg.text?.trim()) return;
 
-      const userInput = msg.text.trim();
-      chatWebviewPanel.webview.postMessage({ command: 'thinking', text: userInput });
+        const userInput = msg.text.trim();
+        chatWebviewPanel.webview.postMessage({ command: 'thinking', text: userInput });
 
-      try {
-        const fileContext = vscode.window.activeTextEditor?.document.uri.fsPath;
-        const response = await routingAgent.route({ input: userInput, fileContext });
-        const { route, isFallback } = response.classification;
+        try {
+          const fileContext = vscode.window.activeTextEditor?.document.uri.fsPath;
+          const response = await routingAgent.route({ input: userInput, fileContext });
+          const { route, isFallback } = response.classification;
 
-        chatWebviewPanel.webview.postMessage({
-          command: 'response',
-          text: response.displayMessage,
-          route: isFallback ? undefined : route,
-          isFallback,
-        });
+          chatWebviewPanel.webview.postMessage({
+            command: 'response',
+            text: response.displayMessage,
+            route: isFallback ? undefined : route,
+            isFallback,
+          });
 
-        if (!isFallback) {
-          switch (route) {
-            case 'version-guard':
-              await vscode.commands.executeCommand(COMMANDS.ANALYZE_FILE);
-              break;
-            case 'pr-summary':
-              await vscode.commands.executeCommand('devmind.generatePRSummary');
-              break;
-            case 'conflict-explainer':
-              // CS-026 is live — run explain on the active file
-              await vscode.commands.executeCommand(CONFLICT_COMMANDS.EXPLAIN_FILE);
-              break;
-            case 'nitpick-fixer':
-              chatWebviewPanel.webview.postMessage({
-                command: 'info',
-                text: '🔧 Nitpick Fixer UI (EPIC-05) coming next — linter runner is ready, panel wiring in progress.',
-              });
-              break;
+          if (!isFallback) {
+            switch (route) {
+              case 'version-guard':
+                await vscode.commands.executeCommand(COMMANDS.ANALYZE_FILE);
+                break;
+              case 'pr-summary':
+                await vscode.commands.executeCommand('devmind.generatePRSummary');
+                break;
+              case 'conflict-explainer':
+                // CS-026 is live — run explain on the active file
+                await vscode.commands.executeCommand(CONFLICT_COMMANDS.EXPLAIN_FILE);
+                break;
+              case 'nitpick-fixer':
+                // CS-029 is live — open the Nitpick Fixer panel
+                await vscode.commands.executeCommand(NITPICK_COMMANDS.FIX_NITPICKS);
+                break;
+            }
           }
+        } catch (err: any) {
+          chatWebviewPanel.webview.postMessage({
+            command: 'error',
+            text: `Routing failed: ${err.message ?? String(err)}`,
+          });
         }
-      } catch (err: any) {
-        chatWebviewPanel.webview.postMessage({
-          command: 'error',
-          text: `Routing failed: ${err.message ?? String(err)}`,
-        });
-      }
-    });
+      },
+    );
   });
 
-  console.log(
-    `DevMind: activated — ${registry.getRegisteredCommands().length} commands registered ✓`
-  );
+  console.log(`DevMind: activated — ${registry.getRegisteredCommands().length} commands registered ✓`);
 }
 
 function buildEmptyState(projectId: string): WebviewState {
