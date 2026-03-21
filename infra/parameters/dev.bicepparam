@@ -2,7 +2,7 @@ using '../main.bicep'
 
 param environment = 'dev'
 param location = 'eastus2'
-param baseName = 'devmind'
+param baseName = 'devmind2'
 param tags = {
   Project: 'DevMind AI'
   Environment: 'dev'
