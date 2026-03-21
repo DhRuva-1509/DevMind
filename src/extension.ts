@@ -67,7 +67,21 @@ import { PRSummaryAgent } from './services/pr-summary/pr.summary.agent';
 import { PRContextExtractorService } from './services/pr-context/pr.context.service';
 import { PromptTemplateService } from './services/prompt-templates/prompt.template.service';
 
+// CS-040: Routing Agent
 import { RoutingAgentService } from './services/routing/routing.agent.service';
+
+// CS-026: Conflict Explainer UI
+import {
+  ConflictCodeLensManager,
+  ConflictHoverManager,
+  ConflictExplainerPanel,
+} from './services/conflict-explainer-ui/conflict.explainer.ui';
+import {
+  CONFLICT_COMMANDS,
+  ConflictPanelAdapter,
+} from './services/conflict-explainer-ui/conflict.explainer.ui.types';
+import { GitConflictParserService } from './services/conflict-parser/conflict.parser.service';
+import { ConflictExplainerAgent } from './services/conflict-explainer/conflict.explainer.agent';
 
 function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
   return {
@@ -242,7 +256,6 @@ function buildAzureServices() {
       ? new SearchIndexClient(searchEndpoint, new AzureKeyCredential(searchApiKey))
       : null;
 
-  // Factory for per-index search clients using API key
   const getDirectSearchClient = (indexName: string) =>
     searchEndpoint && searchApiKey
       ? new SearchClient(searchEndpoint, indexName, new AzureKeyCredential(searchApiKey))
@@ -302,7 +315,6 @@ function buildDocIndexService(
             filterable: f.filterable ?? false,
             retrievable: f.retrievable ?? true,
           };
-          // Vector fields: SDK v12 uses vectorSearchDimensions (not dimensions)
           if (f.dimensions) {
             field.vectorSearchDimensions = Number(f.dimensions);
             field.vectorSearchProfileName = f.vectorSearchProfile ?? 'devmind-vector-profile';
@@ -322,7 +334,6 @@ function buildDocIndexService(
             }
           : undefined;
 
-        // Semantic search config
         const semanticSearch = {
           defaultConfigurationName: 'devmind-semantic',
           configurations: [
@@ -620,11 +631,9 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
 
   const blobWriter: BlobWriter = {
     async write(container: string, key: string, content: string): Promise<void> {
-      // uploadBlob(blobName, content, options?, containerName?)
       await blobService.uploadBlob(key, content, { contentType: 'application/json' }, container);
     },
     async exists(container: string, key: string): Promise<boolean> {
-      // blobExists(blobName, containerName?)
       return blobService.blobExists(key, container);
     },
   };
@@ -637,7 +646,6 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
 }
 
 function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService {
-  // Classifier adapter — direct REST call to GPT-4o (TD-3.2: API key, not DefaultAzureCredential)
   const classifierAdapter = {
     async complete(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
       const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
@@ -675,6 +683,46 @@ function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService 
   return new RoutingAgentService(
     { enableLogging: true, enableConsoleLogging: true },
     classifierAdapter,
+    loggingAdapter
+  );
+}
+
+function buildConflictExplainerAgent(cosmosService: CosmosDBService): ConflictExplainerAgent {
+  const openaiAdapter = {
+    async complete(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
+      const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+      const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+      const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
+      const response = await axios.post(
+        url,
+        {
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.2,
+          max_tokens: maxTokens,
+        },
+        { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
+      );
+      return response.data.choices[0]?.message?.content ?? '{}';
+    },
+  };
+  const loggingAdapter = {
+    async log(entry: any): Promise<void> {
+      try {
+        await (cosmosService as any).upsert('telemetry', {
+          ...entry,
+          partitionKey: entry.filePath ?? 'conflict',
+        });
+      } catch {
+        /* non-fatal */
+      }
+    },
+  };
+  return new ConflictExplainerAgent(
+    { enableLogging: true, enableConsoleLogging: true, confidenceThreshold: 0.6 },
+    openaiAdapter,
     loggingAdapter
   );
 }
@@ -894,6 +942,7 @@ function buildChatHtml(initialMessage: string): string {
 </head>
 <body>
 <div id="header">
+  <span class="logo">🧠</span>
   <h1>DevMind Chat</h1>
   <span class="subtitle">Powered by GPT-4o</span>
 </div>
@@ -1040,7 +1089,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const routingAgent = buildRoutingAgent(cosmosService);
 
-  // Build it manually so we can set command to devmind.openChat
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.text = '$(robot) DevMind';
   statusBarItem.tooltip = 'DevMind — click to open chat';
@@ -1676,6 +1724,151 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // ── CS-026: Conflict Explainer UI ──────────────────────────────────────────
+  const conflictParser = new GitConflictParserService();
+  const conflictCodeLens = new ConflictCodeLensManager();
+  const conflictHover = new ConflictHoverManager();
+
+  const conflictPanelAdapter: ConflictPanelAdapter = {
+    createWebviewPanel(viewType: string, title: string) {
+      const p = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      });
+      return {
+        get html() {
+          return p.webview.html;
+        },
+        set html(v: string) {
+          p.webview.html = v;
+        },
+        reveal() {
+          p.reveal(vscode.ViewColumn.Beside);
+        },
+        dispose() {
+          p.dispose();
+        },
+        postMessage(msg: unknown) {
+          p.webview.postMessage(msg);
+        },
+        onDidDispose(cb: () => void) {
+          p.onDidDispose(cb);
+        },
+        onDidReceiveMessage(cb: any) {
+          p.webview.onDidReceiveMessage(cb);
+        },
+      };
+    },
+    showInformationMessage: (msg: string) => vscode.window.showInformationMessage(msg),
+    showErrorMessage: (msg: string) => vscode.window.showErrorMessage(msg),
+    registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
+      context.subscriptions.push(vscode.commands.registerCommand(id, handler));
+    },
+  };
+
+  const conflictPanel = new ConflictExplainerPanel(conflictPanelAdapter);
+
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(
+      { pattern: '**/*' },
+      {
+        provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+          const uri = document.uri.toString();
+          const content = document.getText();
+          const entries = conflictCodeLens.provideCodeLenses(uri, content);
+          return entries.map((entry) => {
+            const range = new vscode.Range(entry.line, 0, entry.line, 0);
+            return new vscode.CodeLens(range, {
+              title: entry.title,
+              command: entry.command,
+              arguments: entry.args,
+            });
+          });
+        },
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(
+      { pattern: '**/*' },
+      {
+        provideHover(
+          document: vscode.TextDocument,
+          position: vscode.Position
+        ): vscode.Hover | null {
+          const uri = document.uri.toString();
+          const content = document.getText();
+          const entry = conflictHover.provideHover(uri, position.line, content);
+          if (!entry) return null;
+          return new vscode.Hover(new vscode.MarkdownString(entry.markdownContent));
+        },
+      }
+    )
+  );
+
+  adapter.registerCommand(CONFLICT_COMMANDS.EXPLAIN_FILE, async (...args: unknown[]) => {
+    const uri = args[0] as string | undefined;
+    const doc = vscode.window.activeTextEditor?.document;
+    if (!doc) {
+      vscode.window.showWarningMessage('DevMind: No active file.');
+      return;
+    }
+    const filePath = uri ?? doc.uri.toString();
+    const content = doc.getText();
+    const { context: parseCtx, hasConflicts } = conflictParser.parse(filePath, content);
+    if (!hasConflicts) {
+      vscode.window.showInformationMessage('DevMind: No merge conflicts found in this file.');
+      return;
+    }
+    conflictPanel.showLoading(filePath, parseCtx.conflictCount);
+    conflictHover.clearFile(filePath);
+    try {
+      const conflictAgent = buildConflictExplainerAgent(cosmosService);
+      const result = await conflictAgent.explain(parseCtx);
+      const displays = result.explanations.map((exp) => ({
+        conflictIndex: exp.conflictIndex,
+        startLine: exp.startLine,
+        endLine: exp.endLine,
+        currentIntent: exp.currentSide.intent,
+        currentKeyChanges: exp.currentSide.keyChanges,
+        incomingIntent: exp.incomingSide.intent,
+        incomingKeyChanges: exp.incomingSide.keyChanges,
+        resolutionStrategy: exp.resolutionStrategy,
+        confidenceScore: exp.confidenceScore,
+        filePath,
+      }));
+      displays.forEach((d) => conflictHover.storeExplanation(filePath, d));
+      conflictPanel.showExplanations(filePath, displays);
+      const statusMsg =
+        result.status === 'complete'
+          ? `DevMind: ${displays.length} conflict${displays.length === 1 ? '' : 's'} explained.`
+          : `DevMind: ${result.successCount}/${result.successCount + result.failureCount} conflicts explained (${result.status}).`;
+      vscode.window.showInformationMessage(statusMsg);
+    } catch (err: any) {
+      conflictPanel.showError(filePath, err.message ?? String(err));
+      vscode.window.showErrorMessage(`DevMind: Conflict analysis failed — ${err.message}`);
+    }
+  });
+
+  adapter.registerCommand(CONFLICT_COMMANDS.EXPLAIN_SINGLE, async (...args: unknown[]) => {
+    const uri = args[0] as string | undefined;
+    const conflictIndex = args[1] as number | undefined;
+    await vscode.commands.executeCommand(CONFLICT_COMMANDS.EXPLAIN_FILE, uri);
+    if (conflictIndex !== undefined && conflictIndex >= 0) {
+      setTimeout(() => conflictPanel.navigateTo(conflictIndex), 200);
+    }
+  });
+
+  adapter.registerCommand(CONFLICT_COMMANDS.NEXT_CONFLICT, () => {
+    const idx = (conflictPanel as any).state?.currentIndex;
+    conflictPanel.navigateTo((typeof idx === 'number' ? idx : 0) + 1);
+  });
+  adapter.registerCommand(CONFLICT_COMMANDS.PREV_CONFLICT, () => {
+    const idx = (conflictPanel as any).state?.currentIndex;
+    conflictPanel.navigateTo((typeof idx === 'number' ? idx : 0) - 1);
+  });
+
   adapter.registerCommand('devmind.openChat', async () => {
     const chatWebviewPanel = vscode.window.createWebviewPanel(
       'devmind.chat',
@@ -1696,7 +1889,6 @@ export function activate(context: vscode.ExtensionContext): void {
         const response = await routingAgent.route({ input: userInput, fileContext });
         const { route, isFallback } = response.classification;
 
-        // Reply with routing decision
         chatWebviewPanel.webview.postMessage({
           command: 'response',
           text: response.displayMessage,
@@ -1704,7 +1896,6 @@ export function activate(context: vscode.ExtensionContext): void {
           isFallback,
         });
 
-        // Dispatch to the correct agent entry point — no agent internals touched
         if (!isFallback) {
           switch (route) {
             case 'version-guard':
@@ -1714,10 +1905,8 @@ export function activate(context: vscode.ExtensionContext): void {
               await vscode.commands.executeCommand('devmind.generatePRSummary');
               break;
             case 'conflict-explainer':
-              chatWebviewPanel.webview.postMessage({
-                command: 'info',
-                text: '🔍 Conflict Explainer UI (CS-026) coming next — agent is ready, panel wiring in progress.',
-              });
+              // CS-026 is live — run explain on the active file
+              await vscode.commands.executeCommand(CONFLICT_COMMANDS.EXPLAIN_FILE);
               break;
             case 'nitpick-fixer':
               chatWebviewPanel.webview.postMessage({
