@@ -16,7 +16,7 @@ import {
 
 const DEFAULT_DEPLOYMENT = 'gpt-4o';
 const DEFAULT_MAX_TOKENS = 50;
-const DEFAULT_CONFIDENCE_THRESHOLD = 0.6;
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.5;
 
 export class RoutingAgentService {
   private readonly deployment: string;
@@ -144,11 +144,14 @@ export class RoutingAgentService {
     return `You are a routing agent for DevMind, an AI-powered VS Code extension.
 
 Your job is to classify a developer's natural language input into exactly one of these routes:
-- version-guard: Analyzing files for deprecated APIs, version warnings, library compatibility
-- pr-summary: Summarizing pull requests, explaining PR changes, generating PR descriptions
-- conflict-explainer: Explaining git merge conflicts, understanding conflict intent
-- nitpick-fixer: Running linters, fixing code style, ESLint/Prettier/formatting issues
+- version-guard: Analyzing files for deprecated APIs, version warnings, library compatibility, checking dependencies, scanning code for outdated usage. Examples: "analyze this file", "check for deprecated APIs", "scan for version warnings", "analyze current file", "check my dependencies", "any deprecated usage here"
+- pr-summary: Summarizing pull requests, explaining PR changes, generating PR descriptions, reviewing what changed. Examples: "summarize PR #76", "what changed in this pull request", "generate PR summary", "explain this PR"
+- conflict-explainer: Explaining git merge conflicts, understanding conflict intent, decoding what both sides are trying to do. Examples: "explain this conflict", "what does this merge conflict mean", "help me understand this conflict"
+- nitpick-fixer: Running linters, fixing code style, ESLint/Prettier/formatting issues, auto-fixing style warnings. Examples: "fix nitpicks", "run linter", "fix code style", "run eslint", "run prettier"
 - unknown: The input does not clearly match any of the above
+
+When the intent is reasonably clear, prefer a specific route over unknown and use a confidence of 0.8 or higher.
+Only use unknown when the input is genuinely ambiguous or unrelated to the above features.
 
 Respond ONLY with a valid JSON object. No markdown, no explanation outside the JSON.
 {
