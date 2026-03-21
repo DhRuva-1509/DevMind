@@ -67,6 +67,8 @@ import { PRSummaryAgent } from './services/pr-summary/pr.summary.agent';
 import { PRContextExtractorService } from './services/pr-context/pr.context.service';
 import { PromptTemplateService } from './services/prompt-templates/prompt.template.service';
 
+import { RoutingAgentService } from './services/routing/routing.agent.service';
+
 function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
   return {
     createDiagnosticCollection(name: string): DiagnosticCollection {
@@ -240,7 +242,6 @@ function buildAzureServices() {
       ? new SearchIndexClient(searchEndpoint, new AzureKeyCredential(searchApiKey))
       : null;
 
-  // Factory for per-index search clients using API key
   const getDirectSearchClient = (indexName: string) =>
     searchEndpoint && searchApiKey
       ? new SearchClient(searchEndpoint, indexName, new AzureKeyCredential(searchApiKey))
@@ -284,12 +285,11 @@ function buildDocIndexService(
         if (!directIndexClient) {
           return { success: false, error: 'Search client not available' };
         }
-        // Check if index already exists
         try {
           await directIndexClient.getIndex(name);
-          return { success: true }; // already exists
+          return { success: true };
         } catch {
-          // doesn't exist, create it
+          // doesn't exist — create it
         }
 
         const fields = ((schema as any).fields ?? []).map((f: any) => {
@@ -301,7 +301,6 @@ function buildDocIndexService(
             filterable: f.filterable ?? false,
             retrievable: f.retrievable ?? true,
           };
-          // Vector fields: SDK v12 uses vectorSearchDimensions (not dimensions)
           if (f.dimensions) {
             field.vectorSearchDimensions = Number(f.dimensions);
             field.vectorSearchProfileName = f.vectorSearchProfile ?? 'devmind-vector-profile';
@@ -309,12 +308,6 @@ function buildDocIndexService(
           return field;
         });
 
-        console.log(
-          'DevMind createIndex fields:',
-          JSON.stringify(fields.find((f: any) => f.name === 'contentVector'))
-        );
-
-        // Build vector search config if any vector fields exist
         const hasVectorFields = ((schema as any).fields ?? []).some((f: any) => f.dimensions);
         const vectorSearch = hasVectorFields
           ? {
@@ -327,7 +320,6 @@ function buildDocIndexService(
             }
           : undefined;
 
-        // Semantic search config
         const semanticSearch = {
           defaultConfigurationName: 'devmind-semantic',
           configurations: [
@@ -392,7 +384,6 @@ function buildDocIndexService(
         const result = await directClient.mergeOrUploadDocuments(docs);
         const succeeded = result.results.filter((r: any) => r.succeeded).length;
         const failed = result.results.filter((r: any) => !r.succeeded).length;
-        console.log(`DevMind: upserted ${succeeded} docs to ${indexName}`);
         return {
           succeeded,
           failed,
@@ -401,7 +392,6 @@ function buildDocIndexService(
             .map((r: any) => ({ key: r.key ?? '', message: r.errorMessage ?? '' })),
         };
       } catch (e: any) {
-        console.error('DevMind upsert error:', e.message, e.status);
         return {
           succeeded: 0,
           failed: docs.length,
@@ -447,13 +437,8 @@ function buildDocIndexService(
             rerankerScore: result.rerankerScore ?? 0,
           });
         }
-        console.log(
-          `DevMind: hybridSearch found ${searchResults.length} results in ${indexName} for query "${searchText.substring(0, 50)}"`
-        );
         return { results: searchResults, durationMs: Date.now() - start };
       } catch (e: any) {
-        console.error('DevMind hybridSearch error:', e.message, e.status);
-        // Fallback: plain text search without vector
         try {
           const directClient = getDirectSearchClient(indexName);
           if (!directClient) return { results: [], durationMs: 0 };
@@ -466,7 +451,6 @@ function buildDocIndexService(
               rerankerScore: 0,
             });
           }
-          console.log(`DevMind: fallback search found ${searchResults.length} results`);
           return { results: searchResults, durationMs: 0 };
         } catch {
           return { results: [], durationMs: 0 };
@@ -489,23 +473,16 @@ function buildDocIndexService(
       try {
         const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
         const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
-        const deployment = 'text-embedding-3-small';
-        const url = `${endpoint}openai/deployments/${deployment}/embeddings?api-version=2024-02-01`;
+        const url = `${endpoint}openai/deployments/text-embedding-3-small/embeddings?api-version=2024-02-01`;
         const inputTexts = Array.isArray(texts) ? texts : [texts];
-
         const response = await axios.post(
           url,
           { input: inputTexts },
-          {
-            headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
-            timeout: 30000,
-          }
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 30000 }
         );
-
         const embeddings: number[][] = response.data.data.map((d: any) => d.embedding);
         return { embeddings };
       } catch (e: any) {
-        console.error('DevMind embedding error:', e.message);
         return { embeddings: [], error: e.message };
       }
     },
@@ -586,33 +563,19 @@ function buildVersionGuardAgent(
   const openaiAdapter: OpenAIAdapter = {
     async analyze(prompt, deployment) {
       try {
-        // Use OpenAI REST API directly with API key
         const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
         const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
         const model = deployment ?? 'gpt-4o';
         const url = `${endpoint}openai/deployments/${model}/chat/completions?api-version=2024-02-01`;
-
         const response = await axios.post(
           url,
-          {
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.1,
-            max_tokens: 1000,
-          },
-          {
-            headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
-            timeout: 60000,
-          }
+          { messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 1000 },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
         );
-
         const text = response.data.choices[0]?.message?.content ?? '';
         const clean = text.replace(/```json|```/g, '').trim();
-        console.log('DevMind GPT-4o raw response:', clean.substring(0, 500));
-        const parsed = JSON.parse(clean) as OpenAIAnalysisResponse;
-        console.log('DevMind GPT-4o warnings:', JSON.stringify(parsed.warnings));
-        return parsed;
-      } catch (e: any) {
-        console.error('DevMind GPT-4o parse error:', e.message);
+        return JSON.parse(clean) as OpenAIAnalysisResponse;
+      } catch {
         return { warnings: [] };
       }
     },
@@ -654,11 +617,9 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
 
   const blobWriter: BlobWriter = {
     async write(container: string, key: string, content: string): Promise<void> {
-      // uploadBlob(blobName, content, options?, containerName?)
       await blobService.uploadBlob(key, content, { contentType: 'application/json' }, container);
     },
     async exists(container: string, key: string): Promise<boolean> {
-      // blobExists(blobName, containerName?)
       return blobService.blobExists(key, container);
     },
   };
@@ -667,6 +628,49 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
     { enableLogging: true, rateLimitMs: 300, maxDepth: 2, maxPages: 50 },
     httpClient,
     blobWriter
+  );
+}
+
+function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService {
+  // Classifier adapter — direct REST call to GPT-4o (TD-3.2: API key, not DefaultAzureCredential)
+  const classifierAdapter = {
+    async complete(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
+      const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+      const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+      const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
+      const response = await axios.post(
+        url,
+        {
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.1,
+          max_tokens: maxTokens,
+        },
+        { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 15000 }
+      );
+      return response.data.choices[0]?.message?.content ?? '{}';
+    },
+  };
+
+  const loggingAdapter = {
+    async log(entry: any): Promise<void> {
+      try {
+        await (cosmosService as any).upsert('telemetry', {
+          ...entry,
+          partitionKey: entry.route ?? 'routing',
+        });
+      } catch {
+        // non-fatal
+      }
+    },
+  };
+
+  return new RoutingAgentService(
+    { enableLogging: true, enableConsoleLogging: true },
+    classifierAdapter,
+    loggingAdapter
   );
 }
 
@@ -736,7 +740,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
       headers: { 'User-Agent': 'DevMind/1.0' },
       responseType: 'text',
     });
-
     const html = response.data as string;
     const text = html
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -779,13 +782,220 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
   return chunks;
 }
 
+function buildChatHtml(initialMessage: string): string {
+  const escaped = initialMessage
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/  •/g, '&nbsp;&nbsp;•')
+    .replace(/\n/g, '<br>');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevMind Chat</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    margin: 0; padding: 0;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  /* ── Header ── */
+  #header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--vscode-widget-border);
+    background: var(--vscode-editorWidget-background);
+    flex-shrink: 0;
+  }
+  #header .logo { font-size: 16px; }
+  #header h1 { margin: 0; font-size: 13px; font-weight: 600;
+    color: var(--vscode-editor-foreground); }
+  #header .subtitle { font-size: 11px; color: var(--vscode-descriptionForeground); margin-left: auto; }
+  /* ── Messages ── */
+  #messages {
+    flex: 1; overflow-y: auto; padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .msg-row { display: flex; gap: 8px; align-items: flex-start; }
+  .msg-row.user { flex-direction: row-reverse; }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 12px;
+  }
+  .avatar.agent { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .avatar.user  { background: var(--vscode-badge-background);  color: var(--vscode-badge-foreground); }
+  .bubble {
+    max-width: 78%; padding: 8px 12px; border-radius: 8px; line-height: 1.55;
+    font-size: 12.5px;
+  }
+  .bubble.agent {
+    background: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-widget-border);
+    border-top-left-radius: 2px;
+  }
+  .bubble.user {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border-top-right-radius: 2px;
+  }
+  .bubble.error {
+    background: var(--vscode-inputValidation-errorBackground);
+    border: 1px solid var(--vscode-inputValidation-errorBorder);
+  }
+  .bubble.thinking { opacity: 0.65; font-style: italic; }
+  .route-badge {
+    display: inline-block; margin-top: 6px; font-size: 10px;
+    padding: 2px 7px; border-radius: 10px;
+    background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+  }
+  /* ── Input area ── */
+  #input-area {
+    flex-shrink: 0;
+    border-top: 1px solid var(--vscode-widget-border);
+    padding: 10px 16px 12px;
+    background: var(--vscode-editorWidget-background);
+  }
+  #input-row { display: flex; gap: 8px; align-items: center; }
+  #input {
+    flex: 1;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 6px; padding: 7px 11px; font-size: 12.5px;
+    outline: none; font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  #input:focus { border-color: var(--vscode-focusBorder); }
+  #input::placeholder { color: var(--vscode-input-placeholderForeground); }
+  #send {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none; border-radius: 6px; padding: 7px 14px;
+    cursor: pointer; font-size: 12.5px; font-family: inherit;
+    transition: background 0.15s; white-space: nowrap;
+  }
+  #send:hover { background: var(--vscode-button-hoverBackground); }
+  #send:disabled { opacity: 0.5; cursor: not-allowed; }
+  #hint { margin-top: 5px; font-size: 10.5px; color: var(--vscode-descriptionForeground); }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>DevMind Chat</h1>
+  <span class="subtitle">Powered by GPT-4o</span>
+</div>
+
+<div id="messages">
+  <div class="msg-row">
+    <div class="avatar agent">DM</div>
+    <div class="bubble agent">${escaped}</div>
+  </div>
+</div>
+
+<div id="input-area">
+  <div id="input-row">
+    <input id="input" type="text"
+      placeholder="e.g. analyze this file · summarize PR #76 · explain this conflict…"
+      autofocus />
+    <button id="send">Send ↵</button>
+  </div>
+  <div id="hint">Press <kbd>Enter</kbd> to send · routes to the right DevMind agent automatically</div>
+</div>
+
+<script>
+  const vscode = acquireVsCodeApi();
+  const messagesEl = document.getElementById('messages');
+  const inputEl    = document.getElementById('input');
+  const sendBtn    = document.getElementById('send');
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+      .replace(/  •/g, '&nbsp;&nbsp;•')
+      .replace(/\\n/g, '<br>');
+  }
+
+  function addMessage(text, type, route) {
+    const row = document.createElement('div');
+    row.className = 'msg-row' + (type === 'user' ? ' user' : '');
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar ' + (type === 'user' ? 'user' : 'agent');
+    avatar.textContent = type === 'user' ? 'You' : 'DM';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ' + type;
+    bubble.innerHTML = escapeHtml(text);
+
+    if (route && type === 'agent') {
+      const badge = document.createElement('div');
+      badge.className = 'route-badge';
+      badge.textContent = '→ ' + route;
+      bubble.appendChild(badge);
+    }
+
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return bubble;
+  }
+
+  function setInputEnabled(enabled) {
+    inputEl.disabled  = !enabled;
+    sendBtn.disabled  = !enabled;
+  }
+
+  function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text) return;
+    addMessage(text, 'user');
+    inputEl.value = '';
+    setInputEnabled(false);
+    vscode.postMessage({ command: 'send', text });
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  inputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) sendMessage(); });
+
+  window.addEventListener('message', event => {
+    const { command, text, route } = event.data;
+    if (command === 'thinking') {
+      addMessage('Routing your request…', 'agent thinking');
+    } else if (command === 'response') {
+      addMessage(text, 'agent', route);
+      setInputEnabled(true);
+      inputEl.focus();
+    } else if (command === 'info') {
+      addMessage(text, 'agent');
+      setInputEnabled(true);
+      inputEl.focus();
+    } else if (command === 'error') {
+      addMessage(text, 'error');
+      setInputEnabled(true);
+      inputEl.focus();
+    }
+  });
+</script>
+</body>
+</html>`;
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   console.log('DevMind: activating...');
 
   const adapter = buildAdapter(context);
 
   const diagManager = new VersionGuardDiagnostics(adapter);
-  const statusBar = new StatusBarManager(adapter);
   const panel = new VersionGuardPanel(adapter);
   const provider = new VersionGuardProvider(diagManager, adapter);
   const progress = new ProgressManager(adapter);
@@ -822,6 +1032,54 @@ export function activate(context: vscode.ExtensionContext): void {
     toggle
   );
   const crawler = buildDocCrawler(blobService);
+
+  const routingAgent = buildRoutingAgent(cosmosService);
+
+  // Build it manually so we can set command to devmind.openChat
+  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  statusBarItem.text = '$(robot) DevMind';
+  statusBarItem.tooltip = 'DevMind — click to open chat';
+  statusBarItem.command = 'devmind.openChat';
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+
+  const vgStatusBarReal = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  context.subscriptions.push(vgStatusBarReal);
+  const vgStatusAdapter: VscodeAdapter = {
+    ...adapter,
+    createStatusBarItem(): StatusBarItem {
+      return {
+        get text() {
+          return vgStatusBarReal.text;
+        },
+        set text(v) {
+          vgStatusBarReal.text = v;
+        },
+        get tooltip() {
+          return typeof vgStatusBarReal.tooltip === 'string' ? vgStatusBarReal.tooltip : '';
+        },
+        set tooltip(v) {
+          vgStatusBarReal.tooltip = v;
+        },
+        get command() {
+          return typeof vgStatusBarReal.command === 'string' ? vgStatusBarReal.command : undefined;
+        },
+        set command(v) {
+          vgStatusBarReal.command = v;
+        },
+        show() {
+          vgStatusBarReal.show();
+        },
+        hide() {
+          vgStatusBarReal.hide();
+        },
+        dispose() {
+          vgStatusBarReal.dispose();
+        },
+      };
+    },
+  };
+  const statusBar = new StatusBarManager(vgStatusAdapter);
 
   context.subscriptions.push(
     vscode.languages.registerCodeActionsProvider(
@@ -860,18 +1118,13 @@ export function activate(context: vscode.ExtensionContext): void {
         adapter.showWarningMessage('DevMind: No active file to analyze.');
         return;
       }
-
       const uri = editor.document.uri.toString();
       const content = editor.document.getText();
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-
       statusBar.setAnalyzing();
-
       await progress.showAnalysisProgress(editor.document.fileName, async () => {
         try {
           const result = await agent.analyzeFile(uri, content, workspaceRoot, 'command');
-
-          // Map warnings to diagnostic entries
           const entries: DiagnosticEntry[] = result.warnings.map((w: VersionGuardWarning) => ({
             uri,
             line: w.location.line,
@@ -886,10 +1139,7 @@ export function activate(context: vscode.ExtensionContext): void {
             warningId: w.id,
             code: `vg-${w.symbol}`,
           }));
-
           diagManager.setDiagnostics(uri, entries);
-
-          // Register quick fixes — range comes from agent's buildQuickFix (multiline aware)
           result.warnings.forEach((w: VersionGuardWarning) => {
             if (w.quickFix && w.quickFix.newText) {
               diagManager.registerQuickFix({
@@ -907,9 +1157,7 @@ export function activate(context: vscode.ExtensionContext): void {
               });
             }
           });
-
           statusBar.setReady(result.warnings.length);
-
           if (result.warnings.length > 0) {
             adapter.showWarningMessage(
               `DevMind: ${result.warnings.length} version issue${result.warnings.length === 1 ? '' : 's'} found. See Problems panel.`
@@ -939,28 +1187,15 @@ export function activate(context: vscode.ExtensionContext): void {
         'typescript',
       ]);
       if (!library) return;
-
       statusBar.setIndexing(library);
-
       await progress.showIndexingProgress(library, async () => {
         try {
-          // Fetch and chunk docs directly — bypasses blob storage auth issues
           const chunks = await fetchAndChunkDocs(library, projectId);
-          console.log(`DevMind: Fetched ${chunks.length} chunks for ${library}`);
           const indexResult = await docIndexService.indexChunks(projectId, library, chunks);
-          if (indexResult.errors && indexResult.errors.length > 0) {
-            console.error(
-              'DevMind indexing errors:',
-              JSON.stringify(indexResult.errors.slice(0, 3))
-            );
-          }
-
           statusBar.setReady(0);
           adapter.showInformationMessage(
             `DevMind: ${library} indexed — ${indexResult.chunksIndexed} chunks stored in Azure Search.`
           );
-
-          // Update webview
           if (panel.isOpen()) {
             const usage = await docIndexService.getStorageUsage(projectId);
             panel.update({
@@ -986,7 +1221,6 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     },
 
-    // Show webview with real storage data
     async showPanel(): Promise<void> {
       try {
         const usage = await docIndexService.getStorageUsage(projectId);
@@ -1026,11 +1260,7 @@ export function activate(context: vscode.ExtensionContext): void {
           totalStorageBytes: usage.totalStorageBytes,
           lastRefreshed: new Date().toISOString(),
         };
-        if (panel.isOpen()) {
-          panel.update(state);
-        } else {
-          panel.show(state);
-        }
+        panel.isOpen() ? panel.update(state) : panel.show(state);
       } catch {
         adapter.showErrorMessage('DevMind: Failed to refresh panel.');
       }
@@ -1062,7 +1292,6 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   };
 
-  // 9. Register all commands
   const registry = new CommandRegistry(adapter, handlers);
   registry.registerAll();
 
@@ -1072,64 +1301,51 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const prPanelAdapter: PRSummaryPanelAdapter = {
     createWebviewPanel(viewType: string, title: string) {
-      const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
+      const p = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
       return {
         get html() {
-          return panel.webview.html;
+          return p.webview.html;
         },
         set html(v: string) {
-          panel.webview.html = v;
+          p.webview.html = v;
         },
         reveal() {
-          panel.reveal(vscode.ViewColumn.Beside);
+          p.reveal(vscode.ViewColumn.Beside);
         },
         dispose() {
-          panel.dispose();
+          p.dispose();
         },
         postMessage(msg: unknown) {
-          panel.webview.postMessage(msg);
+          p.webview.postMessage(msg);
         },
         onDidDispose(cb: () => void) {
-          panel.onDidDispose(cb);
+          p.onDidDispose(cb);
         },
         onDidReceiveMessage(cb: (msg: PanelMessage) => void) {
-          panel.webview.onDidReceiveMessage(cb);
+          p.webview.onDidReceiveMessage(cb);
         },
       };
     },
-    showInformationMessage: (msg: string) => {
-      vscode.window.showInformationMessage(msg);
-    },
-    showErrorMessage: (msg: string) => {
-      vscode.window.showErrorMessage(msg);
-    },
-    openExternal: (url: string) => {
-      vscode.env.openExternal(vscode.Uri.parse(url));
-    },
+    showInformationMessage: (msg: string) => vscode.window.showInformationMessage(msg),
+    showErrorMessage: (msg: string) => vscode.window.showErrorMessage(msg),
+    openExternal: (url: string) => vscode.env.openExternal(vscode.Uri.parse(url)),
     writeClipboard: (text: string) => vscode.env.clipboard.writeText(text),
     registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
       context.subscriptions.push(vscode.commands.registerCommand(id, handler));
     },
     async postSummaryToGitHub(summary: PRSummary): Promise<void> {
       const githubToken = process.env.GITHUB_TOKEN ?? '';
-
       if (!githubToken) {
-        vscode.window.showErrorMessage(
-          'DevMind: GITHUB_TOKEN not set. Add it to your .env file to post PR comments.'
-        );
+        vscode.window.showErrorMessage('DevMind: GITHUB_TOKEN not set. Add it to your .env file.');
         return;
       }
-
-      // AC-4.1: Wire GitHubMCPClient — uses PAT token, no DefaultAzureCredential
       const ghClient = new GitHubMCPClient({ token: githubToken });
-
       const poster = new PRCommentPoster(
         { enableLogging: true },
         {
-          // Adapter wraps GitHubMCPClient — follows injected adapter pattern (TD-4.1)
           async listPRComments(owner, repo, prNumber) {
             const comments = await ghClient.listPRComments(owner, repo, prNumber);
             return comments.map((c) => ({ id: c.id, body: c.body, author: c.author, url: c.url }));
@@ -1154,7 +1370,6 @@ export function activate(context: vscode.ExtensionContext): void {
           },
         }
       );
-
       const result = await poster.postSummary(summary);
       if (result) {
         const msg = `DevMind: Summary ${result.action} on GitHub PR #${summary.prNumber}`;
@@ -1167,7 +1382,6 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   const prSummaryPanel = new PRSummaryPanel(prPanelAdapter);
 
-  // Wire regenerate button — re-runs the full pipeline bypassing cache
   prSummaryPanel.onRegenerate(async (prNumber: number, repoLabel: string) => {
     const [owner, repo] = repoLabel.split('/');
     if (!owner || !repo) return;
@@ -1181,12 +1395,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // devmind.testPRSummary.loading — shows the loading spinner
   adapter.registerCommand('devmind.testPRSummary.loading', () => {
     prSummaryPanel.showLoading(76, 'DhRuva-1509/devmind');
   });
 
-  // devmind.testPRSummary.success — shows a realistic success state
   adapter.registerCommand('devmind.testPRSummary.success', () => {
     const testSummaryText =
       '## Summary\n' +
@@ -1201,7 +1413,7 @@ export function activate(context: vscode.ExtensionContext): void {
       '## Notes\n' +
       'Linked to #10 (React Query v5 migration epic). Follow-up PR will update `useMutation` calls.';
 
-    const testSummary = {
+    prSummaryPanel.showSummary({
       id: 'pr-summary-DhRuva-1509-devmind-76',
       owner: 'DhRuva-1509',
       repo: 'devmind',
@@ -1221,9 +1433,7 @@ export function activate(context: vscode.ExtensionContext): void {
       generatedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
       prUpdatedAt: new Date().toISOString(),
-    };
-
-    prSummaryPanel.showSummary(testSummary);
+    });
     prSummaryPanel.setLinkedIssues([
       {
         number: 10,
@@ -1258,18 +1468,15 @@ export function activate(context: vscode.ExtensionContext): void {
           },
           async upsert(container: string, item: any) {
             try {
-              // Inject partitionKey so Cosmos reads can find the document
-              const withPartitionKey = {
+              return await (cosmosService as any).upsert(container, {
                 ...item,
                 partitionKey: item.partitionKey ?? `${owner}/${repo}`,
-              };
-              return await (cosmosService as any).upsert(container, withPartitionKey);
+              });
             } catch {
               return { success: false };
             }
           },
         } as any;
-
         const githubAdapter = {
           async getPR(o: string, r: string, n: number) {
             return ghClient.getPR(o, r, n);
@@ -1281,7 +1488,6 @@ export function activate(context: vscode.ExtensionContext): void {
             return ghClient.listPRComments(o, r, n);
           },
         };
-
         const extractor = new PRContextExtractorService({}, githubAdapter, cosmosAdapter);
         return extractor.extractContext(owner, repo, prNumber);
       },
@@ -1326,7 +1532,7 @@ export function activate(context: vscode.ExtensionContext): void {
       async exists(container: string, key: string) {
         return blobService.blobExists(key, container);
       },
-      async listKeys(container: string, prefix: string) {
+      async listKeys(_container: string, _prefix: string) {
         return [];
       },
     };
@@ -1342,7 +1548,7 @@ export function activate(context: vscode.ExtensionContext): void {
     };
 
     const foundryAdapter = {
-      async runAgent(agentId: string, systemPrompt: string, userMessage: string) {
+      async runAgent(_agentId: string, systemPrompt: string, userMessage: string) {
         const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
         const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
         const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
@@ -1357,10 +1563,7 @@ export function activate(context: vscode.ExtensionContext): void {
             temperature: 0.3,
             max_tokens: 2000,
           },
-          {
-            headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
-            timeout: 60000,
-          }
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
         );
         return {
           threadId: `direct-${Date.now()}`,
@@ -1387,14 +1590,13 @@ export function activate(context: vscode.ExtensionContext): void {
       },
       async upsert<T extends { id: string }>(container: string, item: T) {
         try {
-          const itemWithKey = {
+          return await (cosmosService as any).upsert(container, {
             ...item,
             partitionKey:
               (item as any).owner && (item as any).repo
                 ? `${(item as any).owner}/${(item as any).repo}`
                 : ((item as any).partitionKey ?? 'default'),
-          };
-          return await (cosmosService as any).upsert(container, itemWithKey);
+          });
         } catch {
           return { success: false };
         }
@@ -1416,14 +1618,12 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   adapter.registerCommand('devmind.generatePRSummary', async () => {
-    // Ask for owner/repo
     const repoInput = await vscode.window.showInputBox({
       prompt: 'Enter GitHub owner/repo (e.g. DhRuva-1509/devmind)',
       value: 'DhRuva-1509/devmind',
       placeHolder: 'owner/repo',
     });
     if (!repoInput) return;
-
     const [owner, repo] = repoInput.split('/');
     if (!owner || !repo) {
       vscode.window.showErrorMessage('DevMind: Invalid format. Use owner/repo');
@@ -1442,15 +1642,11 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     prSummaryPanel.showLoading(prNumber, `${owner}/${repo}`);
-
     try {
       const summaryAgent = buildPRSummaryAgent();
       const result = await summaryAgent.generateSummary(owner, repo, prNumber, 'command');
-      const { summary } = result;
-
-      prSummaryPanel.showSummary(summary);
-
-      if (summary.prNumber) {
+      prSummaryPanel.showSummary(result.summary);
+      if (result.summary.prNumber) {
         const ghClient = new GitHubMCPClient({ token: process.env.GITHUB_TOKEN ?? '' });
         try {
           const pr = await ghClient.getPR(owner, repo, prNumber);
@@ -1466,7 +1662,6 @@ export function activate(context: vscode.ExtensionContext): void {
           /* non-fatal */
         }
       }
-
       vscode.window.showInformationMessage(
         `DevMind: PR #${prNumber} summary generated (${result.fromCache ? 'from cache' : 'fresh'})`
       );
@@ -1474,6 +1669,66 @@ export function activate(context: vscode.ExtensionContext): void {
       prSummaryPanel.showError(prNumber, err.message ?? String(err));
       vscode.window.showErrorMessage(`DevMind: Failed to generate summary — ${err.message}`);
     }
+  });
+
+  adapter.registerCommand('devmind.openChat', async () => {
+    const chatWebviewPanel = vscode.window.createWebviewPanel(
+      'devmind.chat',
+      'DevMind Chat',
+      vscode.ViewColumn.Beside,
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+    chatWebviewPanel.webview.html = buildChatHtml(routingAgent.buildHelpMessage());
+
+    chatWebviewPanel.webview.onDidReceiveMessage(async (msg: { command: string; text: string }) => {
+      if (msg.command !== 'send' || !msg.text?.trim()) return;
+
+      const userInput = msg.text.trim();
+      chatWebviewPanel.webview.postMessage({ command: 'thinking', text: userInput });
+
+      try {
+        const fileContext = vscode.window.activeTextEditor?.document.uri.fsPath;
+        const response = await routingAgent.route({ input: userInput, fileContext });
+        const { route, isFallback } = response.classification;
+
+        // Reply with routing decision
+        chatWebviewPanel.webview.postMessage({
+          command: 'response',
+          text: response.displayMessage,
+          route: isFallback ? undefined : route,
+          isFallback,
+        });
+
+        // Dispatch to the correct agent entry point — no agent internals touched
+        if (!isFallback) {
+          switch (route) {
+            case 'version-guard':
+              await vscode.commands.executeCommand(COMMANDS.ANALYZE_FILE);
+              break;
+            case 'pr-summary':
+              await vscode.commands.executeCommand('devmind.generatePRSummary');
+              break;
+            case 'conflict-explainer':
+              chatWebviewPanel.webview.postMessage({
+                command: 'info',
+                text: '🔍 Conflict Explainer UI (CS-026) coming next — agent is ready, panel wiring in progress.',
+              });
+              break;
+            case 'nitpick-fixer':
+              chatWebviewPanel.webview.postMessage({
+                command: 'info',
+                text: '🔧 Nitpick Fixer UI (EPIC-05) coming next — linter runner is ready, panel wiring in progress.',
+              });
+              break;
+          }
+        }
+      } catch (err: any) {
+        chatWebviewPanel.webview.postMessage({
+          command: 'error',
+          text: `Routing failed: ${err.message ?? String(err)}`,
+        });
+      }
+    });
   });
 
   console.log(
