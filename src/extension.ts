@@ -242,6 +242,7 @@ function buildAzureServices() {
       ? new SearchIndexClient(searchEndpoint, new AzureKeyCredential(searchApiKey))
       : null;
 
+  // Factory for per-index search clients using API key
   const getDirectSearchClient = (indexName: string) =>
     searchEndpoint && searchApiKey
       ? new SearchClient(searchEndpoint, indexName, new AzureKeyCredential(searchApiKey))
@@ -301,6 +302,7 @@ function buildDocIndexService(
             filterable: f.filterable ?? false,
             retrievable: f.retrievable ?? true,
           };
+          // Vector fields: SDK v12 uses vectorSearchDimensions (not dimensions)
           if (f.dimensions) {
             field.vectorSearchDimensions = Number(f.dimensions);
             field.vectorSearchProfileName = f.vectorSearchProfile ?? 'devmind-vector-profile';
@@ -320,6 +322,7 @@ function buildDocIndexService(
             }
           : undefined;
 
+        // Semantic search config
         const semanticSearch = {
           defaultConfigurationName: 'devmind-semantic',
           configurations: [
@@ -617,9 +620,11 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
 
   const blobWriter: BlobWriter = {
     async write(container: string, key: string, content: string): Promise<void> {
+      // uploadBlob(blobName, content, options?, containerName?)
       await blobService.uploadBlob(key, content, { contentType: 'application/json' }, container);
     },
     async exists(container: string, key: string): Promise<boolean> {
+      // blobExists(blobName, containerName?)
       return blobService.blobExists(key, container);
     },
   };
