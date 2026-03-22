@@ -67,10 +67,8 @@ import { PRSummaryAgent } from './services/pr-summary/pr.summary.agent';
 import { PRContextExtractorService } from './services/pr-context/pr.context.service';
 import { PromptTemplateService } from './services/prompt-templates/prompt.template.service';
 
-// CS-040: Routing Agent
 import { RoutingAgentService } from './services/routing/routing.agent.service';
 
-// CS-026: Conflict Explainer UI
 import {
   ConflictCodeLensManager,
   ConflictHoverManager,
@@ -82,6 +80,15 @@ import {
 } from './services/conflict-explainer-ui/conflict.explainer.ui.types';
 import { GitConflictParserService } from './services/conflict-parser/conflict.parser.service';
 import { ConflictExplainerAgent } from './services/conflict-explainer/conflict.explainer.agent';
+
+import { NitpickFixerPanel } from './services/nitpick-fixer-ui/nitpick.fixer.ui';
+import {
+  NitpickPanelAdapter,
+  NitpickPanelWebviewPanel,
+  NitpickPanelMessage,
+  NITPICK_COMMANDS,
+} from './services/nitpick-fixer-ui/nitpick.fixer.ui.types';
+import { NitpickFixerAgent } from './services/nitpick-fixer/nitpick.fixer.agent';
 
 function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
   return {
@@ -646,6 +653,7 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
 }
 
 function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService {
+  // Classifier adapter — direct REST call to GPT-4o (TD-3.2: API key, not DefaultAzureCredential)
   const classifierAdapter = {
     async complete(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
       const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
@@ -723,6 +731,278 @@ function buildConflictExplainerAgent(cosmosService: CosmosDBService): ConflictEx
   return new ConflictExplainerAgent(
     { enableLogging: true, enableConsoleLogging: true, confidenceThreshold: 0.6 },
     openaiAdapter,
+    loggingAdapter
+  );
+}
+
+function buildNitpickFixerAgent(
+  cwd: string,
+  cosmosService: CosmosDBService,
+  nitpickPanel: NitpickFixerPanel
+): NitpickFixerAgent {
+  const linterAdapter = {
+    async runAll(_paths: string[], cwdArg: string) {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const allFixes: any[] = [];
+      const results: any[] = [];
+      let totalRemainingIssues = 0;
+
+      const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
+      try {
+        console.log(`[DevMind] Running ESLint --fix in ${cwdArg}`);
+        let eslintRaw = '';
+        try {
+          const r = await execFileAsync(npxBin, ['eslint', 'src', '--fix', '--format', 'json'], {
+            cwd: cwdArg,
+            timeout: 60000,
+          });
+          eslintRaw = r.stdout;
+        } catch (e: any) {
+          eslintRaw = e.stdout ?? '';
+        }
+        const parsed = eslintRaw ? JSON.parse(eslintRaw) : [];
+        let errors = 0;
+        let warnings = 0;
+        for (const file of parsed) {
+          errors += file.errorCount ?? 0;
+          warnings += file.warningCount ?? 0;
+          const fixCount = (file.fixableErrorCount ?? 0) + (file.fixableWarningCount ?? 0);
+          if (fixCount > 0) {
+            allFixes.push({
+              linter: 'eslint' as const,
+              filePath: file.filePath,
+              ruleId: null,
+              description: `Applied ${fixCount} ESLint fix(es)`,
+            });
+          }
+        }
+        totalRemainingIssues += errors + warnings;
+        results.push({
+          linter: 'eslint',
+          success: errors === 0,
+          appliedFixes: allFixes.filter((f: any) => f.linter === 'eslint'),
+          remainingIssues: errors + warnings,
+          raw: eslintRaw,
+          durationMs: 0,
+        });
+        console.log(`[DevMind] ESLint done: ${errors} errors, ${warnings} warnings`);
+      } catch (err: any) {
+        console.error(`[DevMind] ESLint failed: ${err.message}`);
+      }
+
+      try {
+        console.log(`[DevMind] Running Prettier --write in ${cwdArg}`);
+        let checkRaw = '';
+        try {
+          const r = await execFileAsync(npxBin, ['prettier', '--check', 'src'], {
+            cwd: cwdArg,
+            timeout: 30000,
+          });
+          checkRaw = r.stdout + r.stderr;
+        } catch (e: any) {
+          checkRaw = (e.stdout ?? '') + (e.stderr ?? '');
+        }
+        await execFileAsync(npxBin, ['prettier', '--write', 'src'], {
+          cwd: cwdArg,
+          timeout: 30000,
+        }).catch(() => {});
+        const unformatted = checkRaw
+          .split('\n')
+          .filter((l: string) => l.includes('[warn]'))
+          .map((l: string) => l.replace('[warn]', '').trim())
+          .filter(Boolean);
+        const prettierFixes = unformatted.map((f: string) => ({
+          linter: 'prettier' as const,
+          filePath: f,
+          ruleId: null,
+          description: 'Applied Prettier formatting',
+        }));
+        allFixes.push(...prettierFixes);
+        results.push({
+          linter: 'prettier',
+          success: true,
+          appliedFixes: prettierFixes,
+          remainingIssues: 0,
+          raw: checkRaw,
+          durationMs: 0,
+        });
+        console.log(`[DevMind] Prettier done: ${prettierFixes.length} files reformatted`);
+      } catch (err: any) {
+        console.error(`[DevMind] Prettier failed: ${err.message}`);
+      }
+
+      if (results.length === 0) {
+        const err: any = new Error(`No linters could run in ${cwdArg}`);
+        err.code = 'NO_LINTERS_DETECTED';
+        err.name = 'NoLintersDetectedError';
+        throw err;
+      }
+
+      try {
+        const gitStatus = await execFileAsync('git', ['status', '--porcelain'], {
+          cwd: cwdArg,
+          timeout: 10000,
+        });
+        const changedFiles = gitStatus.stdout.trim().split('\n').filter(Boolean);
+        console.log(`[DevMind] Git status: ${changedFiles.length} changed files`);
+        if (changedFiles.length > 0 && allFixes.length === 0) {
+          // Linters wrote files but didn't report fixes — synthesise fix entries
+          for (const line of changedFiles) {
+            const filePath = line.slice(3).trim();
+            if (filePath.startsWith('src/')) {
+              allFixes.push({
+                linter: 'prettier' as const,
+                filePath,
+                ruleId: null,
+                description: 'Applied formatting',
+              });
+            }
+          }
+          console.log(`[DevMind] Synthesised ${allFixes.length} fixes from git status`);
+        }
+      } catch (e: any) {
+        console.error(`[DevMind] git status failed: ${e.message}`);
+      }
+
+      return {
+        cwd: cwdArg,
+        results,
+        allFixes,
+        totalRemainingIssues,
+        completedAt: new Date().toISOString(),
+        durationMs: 0,
+      };
+    },
+  };
+
+  const gitAdapter = {
+    async getDiff(cwdArg: string): Promise<string> {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      try {
+        // staged + unstaged changes on tracked files
+        const tracked = await execFileAsync('git', ['diff', 'HEAD'], {
+          cwd: cwdArg,
+          timeout: 15000,
+        })
+          .then((r) => r.stdout)
+          .catch((e: any) => e.stdout ?? '');
+        // untracked new files
+        const untracked = await execFileAsync(
+          'git',
+          ['ls-files', '--others', '--exclude-standard'],
+          { cwd: cwdArg, timeout: 10000 }
+        )
+          .then((r) => r.stdout)
+          .catch(() => '');
+        const combined = [tracked, untracked ? `(untracked files)\n${untracked}` : '']
+          .filter(Boolean)
+          .join('\n');
+        console.log(
+          `[DevMind] getDiff: tracked=${tracked.length} chars, untracked=${untracked.trim().split('\n').filter(Boolean).length} files`
+        );
+        return combined || ' '; // never return empty — agent skips confirm if diff is falsy
+      } catch (e: any) {
+        return e.stdout ?? ' ';
+      }
+    },
+    async stageAll(cwdArg: string): Promise<void> {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      // git add -A stages tracked changes + untracked files + deletions
+      await execFileAsync('git', ['add', '-A'], { cwd: cwdArg, timeout: 15000 });
+      console.log(`[DevMind] git add -A done in ${cwdArg}`);
+    },
+    async commit(message: string, cwdArg: string): Promise<string> {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      await execFileAsync('git', ['commit', '-m', message], { cwd: cwdArg, timeout: 15000 });
+      console.log(`[DevMind] git commit done: "${message}"`);
+      return message;
+    },
+    async getLastCommitSha(cwdArg: string): Promise<string> {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      try {
+        const r = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
+          cwd: cwdArg,
+          timeout: 10000,
+        });
+        return r.stdout.trim();
+      } catch {
+        return 'unknown';
+      }
+    },
+  };
+
+  let _resolvedCommitMessage = 'style: auto-fix linting issues';
+  const confirmAdapter = {
+    async confirm(diff: any, summary: string): Promise<boolean> {
+      return new Promise((resolve) => {
+        const displayDiff =
+          diff?.totalFiles > 0
+            ? diff
+            : {
+                files: (diff?.raw ?? '')
+                  .split('\n')
+                  .filter((l: string) => l.trim())
+                  .slice(0, 10)
+                  .map((f: string) => ({
+                    filePath: f.replace('(untracked files)', '').trim(),
+                    diff: '',
+                    additions: 0,
+                    deletions: 0,
+                  }))
+                  .filter((f: any) => f.filePath),
+                totalFiles: 1,
+                totalAdditions: 0,
+                totalDeletions: 0,
+                raw: diff?.raw ?? 'Linter fixes applied',
+              };
+        nitpickPanel.showConfirming(displayDiff, summary, 0);
+        nitpickPanel.onAccept((_selectedFiles, commitMessage) => {
+          _resolvedCommitMessage = commitMessage || _resolvedCommitMessage;
+          resolve(true);
+        });
+        nitpickPanel.onReject(() => resolve(false));
+      });
+    },
+    getCommitMessage(): string {
+      return _resolvedCommitMessage;
+    },
+  };
+
+  const loggingAdapter = {
+    async log(entry: any): Promise<void> {
+      try {
+        await (cosmosService as any).upsert('telemetry', {
+          ...entry,
+          partitionKey: entry.cwd ?? 'nitpick',
+        });
+      } catch {
+        /* non-fatal */
+      }
+    },
+  };
+
+  return new NitpickFixerAgent(
+    {
+      cwd,
+      autoCommitEnabled: true,
+      stageAll: true,
+      enableLogging: true,
+      enableConsoleLogging: true,
+    },
+    linterAdapter,
+    gitAdapter,
+    confirmAdapter,
     loggingAdapter
   );
 }
@@ -1724,7 +2004,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // ── CS-026: Conflict Explainer UI ──────────────────────────────────────────
   const conflictParser = new GitConflictParserService();
   const conflictCodeLens = new ConflictCodeLensManager();
   const conflictHover = new ConflictHoverManager();
@@ -1869,6 +2148,230 @@ export function activate(context: vscode.ExtensionContext): void {
     conflictPanel.navigateTo((typeof idx === 'number' ? idx : 0) - 1);
   });
 
+  const nitpickPanelAdapter: NitpickPanelAdapter = {
+    createWebviewPanel(viewType: string, title: string): NitpickPanelWebviewPanel {
+      const p = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      });
+      return {
+        get html() {
+          return p.webview.html;
+        },
+        set html(v: string) {
+          p.webview.html = v;
+        },
+        reveal() {
+          p.reveal(vscode.ViewColumn.Beside);
+        },
+        dispose() {
+          p.dispose();
+        },
+        postMessage(msg: unknown) {
+          p.webview.postMessage(msg);
+        },
+        onDidDispose(cb: () => void) {
+          p.onDidDispose(cb);
+        },
+        onDidReceiveMessage(cb: (msg: NitpickPanelMessage) => void) {
+          p.webview.onDidReceiveMessage(cb);
+        },
+      };
+    },
+    showInformationMessage: (msg: string) => vscode.window.showInformationMessage(msg),
+    showErrorMessage: (msg: string) => vscode.window.showErrorMessage(msg),
+    registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
+      context.subscriptions.push(vscode.commands.registerCommand(id, handler));
+    },
+  };
+
+  const nitpickPanel = new NitpickFixerPanel(nitpickPanelAdapter);
+
+  adapter.registerCommand(NITPICK_COMMANDS.FIX_NITPICKS, async () => {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+
+    nitpickPanel.onRerun(async () => {
+      await vscode.commands.executeCommand(NITPICK_COMMANDS.FIX_NITPICKS);
+    });
+
+    try {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
+      nitpickPanel.showRunning('Running ESLint --fix…');
+      let eslintFixCount = 0;
+      try {
+        let eslintRaw = '';
+        try {
+          const r = await execFileAsync(npxBin, ['eslint', 'src', '--fix', '--format', 'json'], {
+            cwd,
+            timeout: 60000,
+          });
+          eslintRaw = r.stdout;
+        } catch (e: any) {
+          eslintRaw = e.stdout ?? '';
+        }
+        if (eslintRaw) {
+          const parsed = JSON.parse(eslintRaw);
+          for (const f of parsed)
+            eslintFixCount += (f.fixableErrorCount ?? 0) + (f.fixableWarningCount ?? 0);
+        }
+        console.log(`[DevMind] ESLint done: ${eslintFixCount} fixes applied`);
+      } catch (e: any) {
+        console.error(`[DevMind] ESLint error: ${e.message}`);
+      }
+
+      nitpickPanel.showRunning('Running Prettier --write…');
+      let prettierFixCount = 0;
+      try {
+        let checkRaw = '';
+        try {
+          const r = await execFileAsync(npxBin, ['prettier', '--check', 'src'], {
+            cwd,
+            timeout: 30000,
+          });
+          checkRaw = r.stdout + r.stderr;
+        } catch (e: any) {
+          checkRaw = (e.stdout ?? '') + (e.stderr ?? '');
+        }
+        prettierFixCount = checkRaw.split('\n').filter((l: string) => l.includes('[warn]')).length;
+        await execFileAsync(npxBin, ['prettier', '--write', 'src'], { cwd, timeout: 30000 }).catch(
+          () => {}
+        );
+        console.log(`[DevMind] Prettier done: ${prettierFixCount} files reformatted`);
+      } catch (e: any) {
+        console.error(`[DevMind] Prettier error: ${e.message}`);
+      }
+
+      nitpickPanel.showRunning('Checking git status…');
+      let changedFiles: string[] = [];
+      try {
+        const r = await execFileAsync('git', ['status', '--porcelain'], { cwd, timeout: 10000 });
+        changedFiles = r.stdout.trim().split('\n').filter(Boolean);
+        console.log(`[DevMind] Changed files: ${changedFiles.length}`);
+      } catch (e: any) {
+        console.error(`[DevMind] git status error: ${e.message}`);
+      }
+
+      if (changedFiles.length === 0) {
+        nitpickPanel.showClean('No linting issues found — your code is clean! ✅');
+        vscode.window.showInformationMessage('DevMind: No linting issues found.');
+        return;
+      }
+
+      let diffRaw = '';
+      try {
+        const tracked = await execFileAsync('git', ['diff'], { cwd, timeout: 15000 })
+          .then((r) => r.stdout)
+          .catch((e: any) => e.stdout ?? '');
+        const untracked = await execFileAsync(
+          'git',
+          ['ls-files', '--others', '--exclude-standard'],
+          { cwd, timeout: 10000 }
+        )
+          .then((r) => r.stdout)
+          .catch(() => '');
+        diffRaw = [tracked, untracked].filter(Boolean).join('\n');
+      } catch (e: any) {
+        console.error(`[DevMind] git diff error: ${e.message}`);
+      }
+
+      const fileDiffs = changedFiles.map((line: string) => {
+        const filePath = line.slice(3).trim();
+        const fileSection =
+          diffRaw.split('diff --git').find((s: string) => s.includes(filePath)) ?? '';
+        const additions = (fileSection.match(/^\+[^+]/gm) ?? []).length;
+        const deletions = (fileSection.match(/^-[^-]/gm) ?? []).length;
+        return { filePath, diff: fileSection, additions, deletions };
+      });
+
+      const totalAdditions = fileDiffs.reduce((s, f) => s + f.additions, 0);
+      const totalDeletions = fileDiffs.reduce((s, f) => s + f.deletions, 0);
+      const totalFixes = eslintFixCount + prettierFixCount || changedFiles.length;
+      const summary = `${totalFixes} fix${totalFixes === 1 ? '' : 'es'} applied across ${changedFiles.length} file${changedFiles.length === 1 ? '' : 's'}`;
+      const diff = {
+        files: fileDiffs,
+        totalFiles: fileDiffs.length,
+        totalAdditions,
+        totalDeletions,
+        raw: diffRaw,
+      };
+
+      let acceptedCommitMessage = 'style: auto-fix linting issues';
+      const accepted = await new Promise<boolean>((resolve) => {
+        nitpickPanel.showConfirming(diff, summary, 0);
+        nitpickPanel.onAccept((_files, commitMessage) => {
+          if (commitMessage) acceptedCommitMessage = commitMessage;
+          resolve(true);
+        });
+        nitpickPanel.onReject(() => resolve(false));
+      });
+
+      if (!accepted) {
+        try {
+          await execFileAsync('git', ['checkout', '--', '.'], { cwd, timeout: 15000 });
+          // Also remove untracked files that linters created
+          const untrackedToDelete = changedFiles
+            .filter((l: string) => l.startsWith('??'))
+            .map((l: string) => l.slice(3).trim());
+          for (const f of untrackedToDelete) {
+            const { unlink } = await import('fs/promises');
+            await unlink(path.join(cwd, f)).catch(() => {});
+          }
+        } catch (e: any) {
+          console.error(`[DevMind] Revert failed: ${e.message}`);
+        }
+        nitpickPanel.showSuccess({
+          status: 'rejected',
+          summary: 'No changes applied — all reverted.',
+          appliedFixes: [],
+          commitSha: null,
+          commitMessage: null,
+        } as any);
+        vscode.window.showInformationMessage('DevMind: Rejected — changes reverted.');
+        return;
+      }
+
+      nitpickPanel.showCommitting(acceptedCommitMessage);
+      try {
+        await execFileAsync('git', ['add', '-A'], { cwd, timeout: 15000 });
+        await execFileAsync('git', ['commit', '-m', acceptedCommitMessage], {
+          cwd,
+          timeout: 15000,
+        });
+        const shaResult = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
+          cwd,
+          timeout: 10000,
+        });
+        const commitSha = shaResult.stdout.trim();
+        console.log(`[DevMind] Committed: ${commitSha}`);
+        nitpickPanel.showSuccess({
+          status: 'committed',
+          summary,
+          appliedFixes: fileDiffs.map((f) => ({
+            linter: 'prettier',
+            filePath: f.filePath,
+            ruleId: null,
+            description: 'Applied formatting',
+          })),
+          commitSha,
+          commitMessage: acceptedCommitMessage,
+        } as any);
+        vscode.window.showInformationMessage(
+          `DevMind: ${changedFiles.length} file${changedFiles.length === 1 ? '' : 's'} committed — ${commitSha}`
+        );
+      } catch (e: any) {
+        nitpickPanel.showError(`Commit failed: ${e.message}`);
+        vscode.window.showErrorMessage(`DevMind: Commit failed — ${e.message}`);
+      }
+    } catch (err: any) {
+      nitpickPanel.showError(err.message ?? String(err));
+      vscode.window.showErrorMessage(`DevMind: Nitpick fixer failed — ${err.message}`);
+    }
+  });
+
   adapter.registerCommand('devmind.openChat', async () => {
     const chatWebviewPanel = vscode.window.createWebviewPanel(
       'devmind.chat',
@@ -1889,6 +2392,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const response = await routingAgent.route({ input: userInput, fileContext });
         const { route, isFallback } = response.classification;
 
+        // Reply with routing decision
         chatWebviewPanel.webview.postMessage({
           command: 'response',
           text: response.displayMessage,
@@ -1909,10 +2413,8 @@ export function activate(context: vscode.ExtensionContext): void {
               await vscode.commands.executeCommand(CONFLICT_COMMANDS.EXPLAIN_FILE);
               break;
             case 'nitpick-fixer':
-              chatWebviewPanel.webview.postMessage({
-                command: 'info',
-                text: '🔧 Nitpick Fixer UI (EPIC-05) coming next — linter runner is ready, panel wiring in progress.',
-              });
+              // CS-029 is live — open the Nitpick Fixer panel
+              await vscode.commands.executeCommand(NITPICK_COMMANDS.FIX_NITPICKS);
               break;
           }
         }
