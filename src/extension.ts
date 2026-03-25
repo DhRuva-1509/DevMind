@@ -946,6 +946,7 @@ function buildNitpickFixerAgent(
   const confirmAdapter = {
     async confirm(diff: any, summary: string): Promise<boolean> {
       return new Promise((resolve) => {
+        // Build a synthetic diff if agent parsed nothing (e.g. untracked files)
         const displayDiff =
           diff?.totalFiles > 0
             ? diff
@@ -1222,7 +1223,7 @@ function buildChatHtml(initialMessage: string): string {
 </head>
 <body>
 <div id="header">
-  <span class="logo">🧠</span>
+  <span class="logo"></span>
   <h1>DevMind Chat</h1>
   <span class="subtitle">Powered by GPT-4o</span>
 </div>
@@ -2373,6 +2374,12 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   adapter.registerCommand('devmind.openChat', async () => {
+    let lastActiveEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
+
+    const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor) lastActiveEditor = editor;
+    });
+
     const chatWebviewPanel = vscode.window.createWebviewPanel(
       'devmind.chat',
       'DevMind Chat',
@@ -2381,6 +2388,8 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     chatWebviewPanel.webview.html = buildChatHtml(routingAgent.buildHelpMessage());
 
+    chatWebviewPanel.onDidDispose(() => editorChangeDisposable.dispose());
+
     chatWebviewPanel.webview.onDidReceiveMessage(async (msg: { command: string; text: string }) => {
       if (msg.command !== 'send' || !msg.text?.trim()) return;
 
@@ -2388,7 +2397,8 @@ export function activate(context: vscode.ExtensionContext): void {
       chatWebviewPanel.webview.postMessage({ command: 'thinking', text: userInput });
 
       try {
-        const fileContext = vscode.window.activeTextEditor?.document.uri.fsPath;
+        const activeEditor = lastActiveEditor;
+        const fileContext = activeEditor?.document.uri.fsPath;
         const response = await routingAgent.route({ input: userInput, fileContext });
         const { route, isFallback } = response.classification;
 
@@ -2403,17 +2413,36 @@ export function activate(context: vscode.ExtensionContext): void {
         if (!isFallback) {
           switch (route) {
             case 'version-guard':
+              if (!activeEditor) {
+                chatWebviewPanel.webview.postMessage({
+                  command: 'info',
+                  text: '⚠️ No file is open to analyze. Open a TypeScript/JavaScript file first, then ask again.',
+                });
+                break;
+              }
+              await vscode.window.showTextDocument(activeEditor.document, {
+                viewColumn: activeEditor.viewColumn,
+                preserveFocus: false,
+              });
               await vscode.commands.executeCommand(COMMANDS.ANALYZE_FILE);
               break;
             case 'pr-summary':
               await vscode.commands.executeCommand('devmind.generatePRSummary');
               break;
             case 'conflict-explainer':
-              // CS-026 is live — run explain on the active file
-              await vscode.commands.executeCommand(CONFLICT_COMMANDS.EXPLAIN_FILE);
+              if (!activeEditor) {
+                chatWebviewPanel.webview.postMessage({
+                  command: 'info',
+                  text: '⚠️ No file is open. Open a file with merge conflicts first, then ask again.',
+                });
+                break;
+              }
+              await vscode.commands.executeCommand(
+                CONFLICT_COMMANDS.EXPLAIN_FILE,
+                activeEditor.document.uri.toString()
+              );
               break;
             case 'nitpick-fixer':
-              // CS-029 is live — open the Nitpick Fixer panel
               await vscode.commands.executeCommand(NITPICK_COMMANDS.FIX_NITPICKS);
               break;
           }
