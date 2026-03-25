@@ -2402,6 +2402,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const response = await routingAgent.route({ input: userInput, fileContext });
         const { route, isFallback } = response.classification;
 
+        // Reply with routing decision
         chatWebviewPanel.webview.postMessage({
           command: 'response',
           text: response.displayMessage,
