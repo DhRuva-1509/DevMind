@@ -1248,9 +1248,7 @@ function buildTribalKnowledgeIndexer(
     'other',
   ]);
   const categorizationAdapter = {
-    async classify(
-      body: string
-    ): Promise<{
+    async classify(body: string): Promise<{
       category: import('./services/tribal-knowledge-indexer/tribal.knowledge.indexer.types').CommentCategory;
       codePatterns: string[];
     }> {
@@ -3286,16 +3284,14 @@ export function activate(context: vscode.ExtensionContext): void {
             {
               async listPRs(o: string, r: string, page: number, ps: number) {
                 const all = await ghClientForTribal.listPRs(o, r, 'all');
-                return all
-                  .slice((page - 1) * ps, page * ps)
-                  .map((pr: any) => ({
-                    number: pr.number,
-                    title: pr.title,
-                    state: pr.state,
-                    author: pr.author,
-                    updatedAt: pr.updatedAt,
-                    url: pr.url,
-                  }));
+                return all.slice((page - 1) * ps, page * ps).map((pr: any) => ({
+                  number: pr.number,
+                  title: pr.title,
+                  state: pr.state,
+                  author: pr.author,
+                  updatedAt: pr.updatedAt,
+                  url: pr.url,
+                }));
               },
               async listPRComments(o: string, r: string, prNumber: number) {
                 const cs = await ghClientForTribal.listPRComments(o, r, prNumber);
