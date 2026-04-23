@@ -90,6 +90,14 @@ import {
 } from './services/nitpick-fixer-ui/nitpick.fixer.ui.types';
 import { NitpickFixerAgent } from './services/nitpick-fixer/nitpick.fixer.agent';
 
+import { PRCommentExporterService } from './services/pr-comment-exporter/pr.comment.exporter.service';
+import { TribalKnowledgeIndexerService } from './services/tribal-knowledge-indexer/tribal.knowledge.indexer.service';
+import { TribalKnowledgeAgent } from './services/tribal-knowledge-agent/tribal.knowledge.agent';
+import { DynamicDocCrawlerService } from './services/dynamic-doc-crawler/dynamic.doc.crawler.service';
+import { TempIndexManager } from './services/temp-index-manager/temp.index.manager.service';
+import { LiveSourceAgent } from './services/live-source-agent/live.source.agent.service';
+import type { PinnedSource } from './services/live-source-agent/live.source.agent.types';
+
 function buildAdapter(context: vscode.ExtensionContext): VscodeAdapter {
   return {
     createDiagnosticCollection(name: string): DiagnosticCollection {
@@ -312,7 +320,6 @@ function buildDocIndexService(
         } catch {
           // doesn't exist — create it
         }
-
         const fields = ((schema as any).fields ?? []).map((f: any) => {
           const field: any = {
             name: f.name,
@@ -328,7 +335,6 @@ function buildDocIndexService(
           }
           return field;
         });
-
         const hasVectorFields = ((schema as any).fields ?? []).some((f: any) => f.dimensions);
         const vectorSearch = hasVectorFields
           ? {
@@ -340,7 +346,6 @@ function buildDocIndexService(
               ],
             }
           : undefined;
-
         const semanticSearch = {
           defaultConfigurationName: 'devmind-semantic',
           configurations: [
@@ -353,7 +358,6 @@ function buildDocIndexService(
             },
           ],
         };
-
         await directIndexClient.createIndex({
           name,
           fields,
@@ -435,7 +439,6 @@ function buildDocIndexService(
           select: ['id', 'content', 'library', 'sourceUrl', 'version'],
         };
         if (options?.filter) searchOptions.filter = options.filter;
-
         if (vector && Array.isArray(vector) && vector.length > 0) {
           searchOptions.vectorSearchOptions = {
             queries: [
@@ -448,7 +451,6 @@ function buildDocIndexService(
             ],
           };
         }
-
         const searchText = query && query.trim() ? query : '*';
         const iter = await directClient.search(searchText, searchOptions);
         for await (const result of iter.results) {
@@ -653,7 +655,6 @@ function buildDocCrawler(blobService: BlobStorageService): DocCrawlerService {
 }
 
 function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService {
-  // Classifier adapter — direct REST call to GPT-4o (TD-3.2: API key, not DefaultAzureCredential)
   const classifierAdapter = {
     async complete(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
       const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
@@ -683,7 +684,7 @@ function buildRoutingAgent(cosmosService: CosmosDBService): RoutingAgentService 
           partitionKey: entry.route ?? 'routing',
         });
       } catch {
-        // non-fatal
+        /* non-fatal */
       }
     },
   };
@@ -748,7 +749,6 @@ function buildNitpickFixerAgent(
       const allFixes: any[] = [];
       const results: any[] = [];
       let totalRemainingIssues = 0;
-
       const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
       try {
@@ -849,7 +849,6 @@ function buildNitpickFixerAgent(
         const changedFiles = gitStatus.stdout.trim().split('\n').filter(Boolean);
         console.log(`[DevMind] Git status: ${changedFiles.length} changed files`);
         if (changedFiles.length > 0 && allFixes.length === 0) {
-          // Linters wrote files but didn't report fixes — synthesise fix entries
           for (const line of changedFiles) {
             const filePath = line.slice(3).trim();
             if (filePath.startsWith('src/')) {
@@ -884,14 +883,12 @@ function buildNitpickFixerAgent(
       const { promisify } = await import('util');
       const execFileAsync = promisify(execFile);
       try {
-        // staged + unstaged changes on tracked files
         const tracked = await execFileAsync('git', ['diff', 'HEAD'], {
           cwd: cwdArg,
           timeout: 15000,
         })
           .then((r) => r.stdout)
           .catch((e: any) => e.stdout ?? '');
-        // untracked new files
         const untracked = await execFileAsync(
           'git',
           ['ls-files', '--others', '--exclude-standard'],
@@ -905,7 +902,7 @@ function buildNitpickFixerAgent(
         console.log(
           `[DevMind] getDiff: tracked=${tracked.length} chars, untracked=${untracked.trim().split('\n').filter(Boolean).length} files`
         );
-        return combined || ' '; // never return empty — agent skips confirm if diff is falsy
+        return combined || ' ';
       } catch (e: any) {
         return e.stdout ?? ' ';
       }
@@ -913,25 +910,21 @@ function buildNitpickFixerAgent(
     async stageAll(cwdArg: string): Promise<void> {
       const { execFile } = await import('child_process');
       const { promisify } = await import('util');
-      const execFileAsync = promisify(execFile);
-      // git add -A stages tracked changes + untracked files + deletions
-      await execFileAsync('git', ['add', '-A'], { cwd: cwdArg, timeout: 15000 });
+      await promisify(execFile)('git', ['add', '-A'], { cwd: cwdArg, timeout: 15000 });
       console.log(`[DevMind] git add -A done in ${cwdArg}`);
     },
     async commit(message: string, cwdArg: string): Promise<string> {
       const { execFile } = await import('child_process');
       const { promisify } = await import('util');
-      const execFileAsync = promisify(execFile);
-      await execFileAsync('git', ['commit', '-m', message], { cwd: cwdArg, timeout: 15000 });
+      await promisify(execFile)('git', ['commit', '-m', message], { cwd: cwdArg, timeout: 15000 });
       console.log(`[DevMind] git commit done: "${message}"`);
       return message;
     },
     async getLastCommitSha(cwdArg: string): Promise<string> {
       const { execFile } = await import('child_process');
       const { promisify } = await import('util');
-      const execFileAsync = promisify(execFile);
       try {
-        const r = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
+        const r = await promisify(execFile)('git', ['rev-parse', '--short', 'HEAD'], {
           cwd: cwdArg,
           timeout: 10000,
         });
@@ -946,7 +939,6 @@ function buildNitpickFixerAgent(
   const confirmAdapter = {
     async confirm(diff: any, summary: string): Promise<boolean> {
       return new Promise((resolve) => {
-        // Build a synthetic diff if agent parsed nothing (e.g. untracked files)
         const displayDiff =
           diff?.totalFiles > 0
             ? diff
@@ -1008,6 +1000,727 @@ function buildNitpickFixerAgent(
   );
 }
 
+function buildPRCommentExporter(
+  cosmosService: CosmosDBService,
+  ghClient: GitHubMCPClient
+): PRCommentExporterService {
+  const githubFetchAdapter = {
+    async listPRs(owner: string, repo: string, page: number, pageSize: number) {
+      const all = await ghClient.listPRs(owner, repo, 'all');
+      const start = (page - 1) * pageSize;
+      return all.slice(start, start + pageSize).map((pr: any) => ({
+        number: pr.number,
+        title: pr.title,
+        state: pr.state,
+        author: pr.author,
+        updatedAt: pr.updatedAt,
+        url: pr.url,
+      }));
+    },
+    async listPRComments(owner: string, repo: string, prNumber: number) {
+      const comments = await ghClient.listPRComments(owner, repo, prNumber);
+      return comments.map((c: any) => ({
+        id: c.id,
+        user: c.author,
+        body: c.body,
+        source: 'review' as const,
+        path: c.path ?? null,
+        line: c.line ?? null,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+      }));
+    },
+  };
+
+  const cosmosExportAdapter = {
+    async upsertComment(comment: any): Promise<void> {
+      try {
+        await (cosmosService as any).upsert('pr-comments', comment);
+      } catch {
+        /* non-fatal */
+      }
+    },
+    async readComment(id: string, partitionKey: string): Promise<any> {
+      try {
+        const r = await (cosmosService as any).read('pr-comments', id, partitionKey);
+        return r?.success ? r.data : null;
+      } catch {
+        return null;
+      }
+    },
+    async upsertSyncState(state: any): Promise<void> {
+      try {
+        await (cosmosService as any).upsert('telemetry', state);
+      } catch {
+        /* non-fatal */
+      }
+    },
+    async readSyncState(owner: string, repo: string): Promise<any> {
+      try {
+        const id = `sync-state/${owner}/${repo}`.toLowerCase();
+        const pk = `${owner}/${repo}`.toLowerCase();
+        const r = await (cosmosService as any).read('telemetry', id, pk);
+        return r?.success ? r.data : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+
+  return new PRCommentExporterService(
+    { enableLogging: true, pageSize: 100, maxPages: 50, enableStorage: true },
+    githubFetchAdapter as any,
+    cosmosExportAdapter as any
+  );
+}
+
+function buildTribalKnowledgeIndexer(
+  directIndexClient: any,
+  getDirectSearchClient: (name: string) => any
+): TribalKnowledgeIndexerService {
+  const embeddingAdapter = {
+    async embed(texts: string[]): Promise<number[][]> {
+      try {
+        const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+        const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+        const url = `${endpoint}openai/deployments/text-embedding-3-small/embeddings?api-version=2024-02-01`;
+        const res = await axios.post(
+          url,
+          { input: Array.isArray(texts) ? texts : [texts] },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 30000 }
+        );
+        return (res.data.data as any[]).map((d: any) => d.embedding as number[]);
+      } catch {
+        return texts.map(() => []);
+      }
+    },
+  };
+
+  const searchAdapter = {
+    async indexExists(name: string): Promise<boolean> {
+      if (!directIndexClient) return false;
+      try {
+        await directIndexClient.getIndex(name);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async createIndex(schema: any): Promise<void> {
+      if (!directIndexClient) return;
+      try {
+        const fields = (schema.fields ?? []).map((f: any) => {
+          const out: any = {
+            name: f.name,
+            type: f.type,
+            key: f.key ?? false,
+            searchable: f.searchable ?? false,
+            filterable: f.filterable ?? false,
+            sortable: f.sortable ?? false,
+            retrievable: f.retrievable ?? true,
+          };
+          if (f.vectorSearchDimensions) {
+            out.vectorSearchDimensions = Number(f.vectorSearchDimensions);
+            out.vectorSearchProfileName = f.vectorSearchProfileName ?? 'devmind-vector-profile';
+          }
+          return out;
+        });
+        const hasVec = fields.some((f: any) => f.vectorSearchDimensions);
+        await directIndexClient.createIndex({
+          name: schema.name,
+          fields,
+          ...(hasVec
+            ? {
+                vectorSearch: {
+                  profiles: [
+                    { name: 'devmind-vector-profile', algorithmConfigurationName: 'devmind-hnsw' },
+                  ],
+                  algorithms: [
+                    { name: 'devmind-hnsw', kind: 'hnsw', hnswParameters: { metric: 'cosine' } },
+                  ],
+                },
+              }
+            : {}),
+          semanticSearch: {
+            defaultConfigurationName: 'devmind-semantic',
+            configurations: [
+              {
+                name: 'devmind-semantic',
+                prioritizedFields: {
+                  contentFields: [{ name: 'content' }],
+                  keywordsFields: [{ name: 'category' }],
+                },
+              },
+            ],
+          },
+        });
+      } catch (e: any) {
+        console.log(`[DevMind] tribal createIndex (may already exist): ${e.message}`);
+      }
+    },
+    async upsertDocuments(
+      indexName: string,
+      docs: any[]
+    ): Promise<{ succeeded: number; failed: number; errors: any[] }> {
+      const client = getDirectSearchClient(indexName);
+      if (!client) return { succeeded: 0, failed: docs.length, errors: [] };
+      try {
+        const res = await client.mergeOrUploadDocuments(docs);
+        return {
+          succeeded: res.results.filter((r: any) => r.succeeded).length,
+          failed: res.results.filter((r: any) => !r.succeeded).length,
+          errors: res.results
+            .filter((r: any) => !r.succeeded)
+            .map((r: any) => ({ key: r.key, message: r.errorMessage })),
+        };
+      } catch (e: any) {
+        return { succeeded: 0, failed: docs.length, errors: [{ key: 'all', message: e.message }] };
+      }
+    },
+    async documentExists(indexName: string, id: string): Promise<boolean> {
+      const client = getDirectSearchClient(indexName);
+      if (!client) return false;
+      try {
+        await client.getDocument(id);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async hybridSearch(
+      indexName: string,
+      query: string,
+      vector: number[] | undefined,
+      options: any
+    ): Promise<Array<{ document: any; score: number }>> {
+      const client = getDirectSearchClient(indexName);
+      if (!client) return [];
+      try {
+        const opts: any = {
+          top: options?.topK ?? 10,
+          select: [
+            'id',
+            'content',
+            'category',
+            'filePath',
+            'prNumber',
+            'prTitle',
+            'author',
+            'relevanceScore',
+            'codePatterns',
+          ],
+        };
+        if (options?.filter) opts.filter = options.filter;
+        if (vector?.length) {
+          opts.vectorSearchOptions = {
+            queries: [
+              {
+                kind: 'vector',
+                vector,
+                kNearestNeighborsCount: options?.topK ?? 10,
+                fields: ['contentVector'],
+              },
+            ],
+          };
+        }
+        const iter = await client.search(query || '*', opts);
+        const results: Array<{ document: any; score: number }> = [];
+        for await (const r of iter.results)
+          results.push({ document: r.document, score: r.score ?? 0 });
+        return results;
+      } catch {
+        return [];
+      }
+    },
+  };
+
+  const VALID_CATEGORIES = new Set([
+    'bug',
+    'performance',
+    'security',
+    'architecture',
+    'style',
+    'test',
+    'documentation',
+    'nitpick',
+    'question',
+    'praise',
+    'other',
+  ]);
+  const categorizationAdapter = {
+    async classify(
+      body: string
+    ): Promise<{
+      category: import('./services/tribal-knowledge-indexer/tribal.knowledge.indexer.types').CommentCategory;
+      codePatterns: string[];
+    }> {
+      try {
+        const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+        const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+        const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
+        const res = await axios.post(
+          url,
+          {
+            messages: [
+              {
+                role: 'user',
+                content:
+                  `Classify this PR comment into ONE category: bug, performance, security, architecture, style, test, documentation, nitpick, question, praise, other.\n` +
+                  `List up to 3 code patterns mentioned (e.g. async_await, error_handling).\n` +
+                  `Respond ONLY as JSON with no markdown: {"category":"...","codePatterns":["..."]}\n\nComment: ${body.slice(0, 500)}`,
+              },
+            ],
+            temperature: 0.1,
+            max_tokens: 100,
+          },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 15000 }
+        );
+        const text = res.data.choices[0]?.message?.content ?? '{}';
+        const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+        const category = VALID_CATEGORIES.has(parsed.category) ? parsed.category : 'other';
+        return {
+          category,
+          codePatterns: Array.isArray(parsed.codePatterns) ? parsed.codePatterns : [],
+        };
+      } catch {
+        return { category: 'other', codePatterns: [] };
+      }
+    },
+  };
+
+  return new TribalKnowledgeIndexerService(
+    { incrementalOnly: true, enableCategorization: true },
+    embeddingAdapter as any,
+    searchAdapter as any,
+    categorizationAdapter
+  );
+}
+
+function buildTribalKnowledgeAgent(
+  tribalIndexer: TribalKnowledgeIndexerService,
+  cosmosService: CosmosDBService
+): TribalKnowledgeAgent {
+  const searchAdapter = {
+    async search(owner: string, repo: string, query: string, options: any) {
+      try {
+        const res = await tribalIndexer.search(owner, repo, query, options);
+        return res.results;
+      } catch {
+        return [];
+      }
+    },
+  };
+
+  const warningAdapter = {
+    async generate(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
+      try {
+        const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+        const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+        const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
+        const res = await axios.post(
+          url,
+          {
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.3,
+            max_tokens: maxTokens,
+          },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 30000 }
+        );
+        return res.data.choices[0]?.message?.content ?? '';
+      } catch {
+        return '';
+      }
+    },
+  };
+
+  const loggingAdapter = {
+    async log(entry: any): Promise<void> {
+      try {
+        await (cosmosService as any).upsert('telemetry', {
+          ...entry,
+          partitionKey: `tribal/${entry.owner ?? 'unknown'}`,
+        });
+      } catch {
+        /* non-fatal */
+      }
+    },
+  };
+
+  return new TribalKnowledgeAgent(
+    {
+      sensitivityThreshold: 0.7,
+      maxWarnings: 5,
+      enableLogging: true,
+      enableWarningGeneration: true,
+    },
+    searchAdapter as any,
+    warningAdapter as any,
+    loggingAdapter as any
+  );
+}
+
+function buildTempIndexManager(
+  directIndexClient: any,
+  getDirectSearchClient: (name: string) => any,
+  _cosmosService: CosmosDBService
+): TempIndexManager {
+  const searchAdapter = {
+    async indexExists(name: string): Promise<boolean> {
+      if (!directIndexClient) return false;
+      try {
+        await directIndexClient.getIndex(name);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async createIndex(name: string, dimensions: number): Promise<void> {
+      if (!directIndexClient) return;
+      try {
+        await directIndexClient.createIndex({
+          name,
+          fields: [
+            {
+              name: 'id',
+              type: 'Edm.String',
+              key: true,
+              searchable: false,
+              filterable: true,
+              retrievable: true,
+            },
+            {
+              name: 'content',
+              type: 'Edm.String',
+              key: false,
+              searchable: true,
+              filterable: false,
+              retrievable: true,
+            },
+            {
+              name: 'sourceRef',
+              type: 'Edm.String',
+              key: false,
+              searchable: false,
+              filterable: true,
+              retrievable: true,
+            },
+            {
+              name: 'sourceType',
+              type: 'Edm.String',
+              key: false,
+              searchable: false,
+              filterable: true,
+              retrievable: true,
+            },
+            {
+              name: 'sessionId',
+              type: 'Edm.String',
+              key: false,
+              searchable: false,
+              filterable: true,
+              retrievable: true,
+            },
+            {
+              name: 'chunkIndex',
+              type: 'Edm.Int32',
+              key: false,
+              searchable: false,
+              sortable: true,
+              retrievable: true,
+            },
+            {
+              name: 'tokenCount',
+              type: 'Edm.Int32',
+              key: false,
+              searchable: false,
+              retrievable: true,
+            },
+            {
+              name: 'indexedAt',
+              type: 'Edm.String',
+              key: false,
+              searchable: false,
+              retrievable: true,
+            },
+            {
+              name: 'vector',
+              type: 'Collection(Edm.Single)',
+              searchable: true,
+              retrievable: false,
+              vectorSearchDimensions: dimensions,
+              vectorSearchProfileName: 'devmind-vector-profile',
+            },
+          ],
+          vectorSearch: {
+            profiles: [
+              { name: 'devmind-vector-profile', algorithmConfigurationName: 'devmind-hnsw' },
+            ],
+            algorithms: [
+              { name: 'devmind-hnsw', kind: 'hnsw', hnswParameters: { metric: 'cosine' } },
+            ],
+          },
+        });
+      } catch {
+        /* already exists — non-fatal */
+      }
+    },
+    async deleteIndex(name: string): Promise<void> {
+      if (!directIndexClient) return;
+      try {
+        await directIndexClient.deleteIndex(name);
+      } catch {
+        /* non-fatal */
+      }
+    },
+    async listIndexesByPrefix(prefix: string): Promise<string[]> {
+      if (!directIndexClient) return [];
+      try {
+        const names: string[] = [];
+        for await (const idx of directIndexClient.listIndexes()) {
+          if (idx.name.startsWith(prefix)) names.push(idx.name);
+        }
+        return names;
+      } catch {
+        return [];
+      }
+    },
+    async upsertDocuments(indexName: string, docs: any[]): Promise<void> {
+      const client = getDirectSearchClient(indexName);
+      if (!client) return;
+      try {
+        await client.mergeOrUploadDocuments(docs);
+      } catch {
+        /* non-fatal */
+      }
+    },
+    async search(
+      indexName: string,
+      query: string,
+      vector: number[] | undefined,
+      topK: number
+    ): Promise<
+      Array<{ id: string; content: string; sourceRef: string; chunkIndex: number; score: number }>
+    > {
+      const client = getDirectSearchClient(indexName);
+      if (!client) return [];
+      try {
+        const opts: any = { top: topK, select: ['id', 'content', 'sourceRef', 'chunkIndex'] };
+        if (vector?.length) {
+          opts.vectorSearchOptions = {
+            queries: [{ kind: 'vector', vector, kNearestNeighborsCount: topK, fields: ['vector'] }],
+          };
+        }
+        const iter = await client.search(query || '*', opts);
+        const results: any[] = [];
+        for await (const r of iter.results) {
+          results.push({
+            id: r.document.id,
+            content: r.document.content,
+            sourceRef: r.document.sourceRef,
+            chunkIndex: r.document.chunkIndex,
+            score: r.score ?? 0,
+          });
+        }
+        return results;
+      } catch {
+        return [];
+      }
+    },
+  };
+
+  const embeddingAdapter = {
+    async embed(text: string): Promise<number[]> {
+      try {
+        const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+        const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+        const url = `${endpoint}openai/deployments/text-embedding-3-small/embeddings?api-version=2024-02-01`;
+        const res = await axios.post(
+          url,
+          { input: [text] },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 30000 }
+        );
+        return (res.data.data[0]?.embedding ?? []) as number[];
+      } catch {
+        return [];
+      }
+    },
+  };
+
+  const stateMap = new Map<string, any>();
+  const stateAdapter = {
+    async saveRecord(record: any) {
+      stateMap.set(record.sessionId, record);
+    },
+    async readRecord(sessionId: string) {
+      return stateMap.get(sessionId) ?? null;
+    },
+    async deleteRecord(sessionId: string) {
+      stateMap.delete(sessionId);
+    },
+    async listRecords() {
+      return [...stateMap.values()];
+    },
+  };
+
+  return new TempIndexManager(
+    { ttlMs: 30 * 60 * 1000, maxStorageBytes: 50 * 1024 * 1024, enableAutoExpiry: true },
+    searchAdapter as any,
+    embeddingAdapter as any,
+    stateAdapter as any
+  );
+}
+
+function buildDynamicDocCrawler(blobService: BlobStorageService): DynamicDocCrawlerService {
+  const httpAdapter = {
+    async fetch(url: string, timeoutMs: number): Promise<string> {
+      const res = await axios.get(url, {
+        timeout: timeoutMs,
+        responseType: 'text',
+        headers: { 'User-Agent': 'DevMind/1.0 Live-Source Crawler' },
+      });
+      return res.data as string;
+    },
+  };
+
+  const pdfAdapter = {
+    async parse(buffer: Buffer): Promise<string> {
+      try {
+        const pdfParse = require('pdf-parse');
+        const result = await pdfParse(buffer);
+        return result.text ?? '';
+      } catch {
+        return '';
+      }
+    },
+  };
+
+  const blobStorageAdapter = {
+    async upload(key: string, content: string, container: string): Promise<void> {
+      try {
+        await blobService.uploadBlob(key, content, { contentType: 'application/json' }, container);
+      } catch {
+        /* non-fatal */
+      }
+    },
+  };
+
+  return new DynamicDocCrawlerService(
+    { targetChunkTokens: 500, enableLogging: true },
+    httpAdapter as any,
+    pdfAdapter as any,
+    blobStorageAdapter as any
+  );
+}
+
+function buildLiveSourceAgent(
+  tempIndexManager: TempIndexManager,
+  dynamicCrawler: DynamicDocCrawlerService,
+  statusBarItem: vscode.StatusBarItem
+): LiveSourceAgent {
+  const crawlerAdapter = {
+    async crawlUrl(url: string, _opts: { depth: number; maxPages: number }) {
+      const result = await dynamicCrawler.crawl({ type: 'url', url });
+      return result.chunks.map((c) => ({
+        content: c.content,
+        sourceRef: c.sourceRef,
+        sourceType: 'url' as const,
+        chunkIndex: c.chunkIndex,
+        tokenCount: c.tokenCount,
+      }));
+    },
+    async parsePdf(buffer: Buffer, filename: string) {
+      const result = await dynamicCrawler.crawl({ type: 'pdf', buffer, filename });
+      return result.chunks.map((c) => ({
+        content: c.content,
+        sourceRef: filename,
+        sourceType: 'pdf' as const,
+        chunkIndex: c.chunkIndex,
+        tokenCount: c.tokenCount,
+      }));
+    },
+  };
+
+  const indexAdapter = {
+    async createSession(sessionId: string, label: string) {
+      const res = await tempIndexManager.createIndex({ sessionId, sourceLabel: label });
+      return { sessionId: res.record.sessionId, indexName: res.record.indexName };
+    },
+    async upsertChunks(sessionId: string, chunks: any[]) {
+      const res = await tempIndexManager.upsertChunks({ sessionId, chunks });
+      return { uploaded: res.uploaded };
+    },
+    async search(sessionId: string, query: string, vector: number[] | undefined, topK: number) {
+      try {
+        const res = await tempIndexManager.search({ sessionId, query, vector, topK });
+        return res.results.map((r) => ({ content: r.content, score: r.score }));
+      } catch {
+        return [];
+      }
+    },
+    async deleteSession(sessionId: string) {
+      await tempIndexManager.deleteIndex(sessionId);
+    },
+  };
+
+  const embeddingAdapter = {
+    async embed(text: string): Promise<number[]> {
+      try {
+        const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+        const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+        const url = `${endpoint}openai/deployments/text-embedding-3-small/embeddings?api-version=2024-02-01`;
+        const res = await axios.post(
+          url,
+          { input: [text] },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 30000 }
+        );
+        return (res.data.data[0]?.embedding ?? []) as number[];
+      } catch {
+        return [];
+      }
+    },
+  };
+
+  let _pinnedSources: PinnedSource[] = [];
+  const stateAdapter = {
+    async save(sources: PinnedSource[]) {
+      _pinnedSources = sources;
+    },
+    async load() {
+      return _pinnedSources;
+    },
+  };
+
+  const statusBarAdapter = {
+    update(state: { pinnedCount: number; labels: string[] }) {
+      const label =
+        state.pinnedCount === 1
+          ? `$(pin) ${state.labels[0]} pinned`
+          : `$(pin) ${state.pinnedCount} docs pinned`;
+      statusBarItem.text = label;
+      statusBarItem.tooltip = `Pinned: ${state.labels.join(', ')} — click to manage`;
+      statusBarItem.command = 'devmind.liveSource.list';
+      statusBarItem.show();
+    },
+    clear() {
+      statusBarItem.text = '$(robot) DevMind';
+      statusBarItem.tooltip = 'DevMind — click to open chat';
+      statusBarItem.command = 'devmind.openChat';
+    },
+  };
+
+  return new LiveSourceAgent(
+    { maxPinnedSources: 5, priorityWeight: 1.5, crawlDepth: 2, maxPages: 20, enableLogging: true },
+    crawlerAdapter as any,
+    indexAdapter as any,
+    embeddingAdapter as any,
+    stateAdapter as any,
+    statusBarAdapter as any
+  );
+}
+
 const LIBRARY_DOCS: Record<string, { url: string; description: string }> = {
   'react-query': {
     url: 'https://tanstack.com/query/latest/docs/framework/react/overview',
@@ -1064,10 +1777,8 @@ const LIBRARY_DOCS: Record<string, { url: string; description: string }> = {
 async function fetchAndChunkDocs(library: string, projectId: string): Promise<any[]> {
   const entry = LIBRARY_DOCS[library];
   if (!entry) return [];
-
   const chunks: any[] = [];
   const ts = Date.now();
-
   try {
     const response = await axios.get(entry.url, {
       timeout: 10000,
@@ -1081,7 +1792,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-
     const words = text.split(' ').filter((w) => w.length > 0);
     const chunkSize = 400;
     for (let i = 0; i < Math.min(words.length, chunkSize * 10); i += chunkSize) {
@@ -1101,7 +1811,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
   } catch {
     console.log(`DevMind: fetch failed for ${library}, using fallback description`);
   }
-
   chunks.push({
     id: `${library}-desc-${ts}`,
     content: entry.description,
@@ -1112,7 +1821,6 @@ async function fetchAndChunkDocs(library: string, projectId: string): Promise<an
     chunkIndex: chunks.length,
     tokenCount: Math.ceil(entry.description.length / 4),
   });
-
   return chunks;
 }
 
@@ -1133,89 +1841,29 @@ function buildChatHtml(initialMessage: string): string {
 <title>DevMind Chat</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
-  body {
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-    background: var(--vscode-editor-background);
-    color: var(--vscode-editor-foreground);
-    margin: 0; padding: 0;
-    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
-  }
-  /* ── Header ── */
-  #header {
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--vscode-widget-border);
-    background: var(--vscode-editorWidget-background);
-    flex-shrink: 0;
-  }
+  body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  #header { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); flex-shrink: 0; }
   #header .logo { font-size: 16px; }
-  #header h1 { margin: 0; font-size: 13px; font-weight: 600;
-    color: var(--vscode-editor-foreground); }
+  #header h1 { margin: 0; font-size: 13px; font-weight: 600; color: var(--vscode-editor-foreground); }
   #header .subtitle { font-size: 11px; color: var(--vscode-descriptionForeground); margin-left: auto; }
-  /* ── Messages ── */
-  #messages {
-    flex: 1; overflow-y: auto; padding: 16px;
-    display: flex; flex-direction: column; gap: 12px;
-  }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
   .msg-row { display: flex; gap: 8px; align-items: flex-start; }
   .msg-row.user { flex-direction: row-reverse; }
-  .avatar {
-    width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center; font-size: 12px;
-  }
+  .avatar { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; }
   .avatar.agent { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  .avatar.user  { background: var(--vscode-badge-background);  color: var(--vscode-badge-foreground); }
-  .bubble {
-    max-width: 78%; padding: 8px 12px; border-radius: 8px; line-height: 1.55;
-    font-size: 12.5px;
-  }
-  .bubble.agent {
-    background: var(--vscode-editorWidget-background);
-    border: 1px solid var(--vscode-widget-border);
-    border-top-left-radius: 2px;
-  }
-  .bubble.user {
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    border-top-right-radius: 2px;
-  }
-  .bubble.error {
-    background: var(--vscode-inputValidation-errorBackground);
-    border: 1px solid var(--vscode-inputValidation-errorBorder);
-  }
+  .avatar.user { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+  .bubble { max-width: 78%; padding: 8px 12px; border-radius: 8px; line-height: 1.55; font-size: 12.5px; }
+  .bubble.agent { background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); border-top-left-radius: 2px; }
+  .bubble.user { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-top-right-radius: 2px; }
+  .bubble.error { background: var(--vscode-inputValidation-errorBackground); border: 1px solid var(--vscode-inputValidation-errorBorder); }
   .bubble.thinking { opacity: 0.65; font-style: italic; }
-  .route-badge {
-    display: inline-block; margin-top: 6px; font-size: 10px;
-    padding: 2px 7px; border-radius: 10px;
-    background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
-  }
-  /* ── Input area ── */
-  #input-area {
-    flex-shrink: 0;
-    border-top: 1px solid var(--vscode-widget-border);
-    padding: 10px 16px 12px;
-    background: var(--vscode-editorWidget-background);
-  }
+  .route-badge { display: inline-block; margin-top: 6px; font-size: 10px; padding: 2px 7px; border-radius: 10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+  #input-area { flex-shrink: 0; border-top: 1px solid var(--vscode-widget-border); padding: 10px 16px 12px; background: var(--vscode-editorWidget-background); }
   #input-row { display: flex; gap: 8px; align-items: center; }
-  #input {
-    flex: 1;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border);
-    border-radius: 6px; padding: 7px 11px; font-size: 12.5px;
-    outline: none; font-family: inherit;
-    transition: border-color 0.15s;
-  }
+  #input { flex: 1; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 6px; padding: 7px 11px; font-size: 12.5px; outline: none; font-family: inherit; transition: border-color 0.15s; }
   #input:focus { border-color: var(--vscode-focusBorder); }
   #input::placeholder { color: var(--vscode-input-placeholderForeground); }
-  #send {
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    border: none; border-radius: 6px; padding: 7px 14px;
-    cursor: pointer; font-size: 12.5px; font-family: inherit;
-    transition: background 0.15s; white-space: nowrap;
-  }
+  #send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: background 0.15s; white-space: nowrap; }
   #send:hover { background: var(--vscode-button-hoverBackground); }
   #send:disabled { opacity: 0.5; cursor: not-allowed; }
   #hint { margin-top: 5px; font-size: 10.5px; color: var(--vscode-descriptionForeground); }
@@ -1227,102 +1875,123 @@ function buildChatHtml(initialMessage: string): string {
   <h1>DevMind Chat</h1>
   <span class="subtitle">Powered by GPT-4o</span>
 </div>
-
 <div id="messages">
   <div class="msg-row">
     <div class="avatar agent">DM</div>
     <div class="bubble agent">${escaped}</div>
   </div>
 </div>
-
 <div id="input-area">
   <div id="input-row">
-    <input id="input" type="text"
-      placeholder="e.g. analyze this file · summarize PR #76 · explain this conflict…"
-      autofocus />
+    <input id="input" type="text" placeholder="e.g. analyze this file · summarize PR #76 · explain this conflict…" autofocus />
     <button id="send">Send ↵</button>
   </div>
   <div id="hint">Press <kbd>Enter</kbd> to send · routes to the right DevMind agent automatically</div>
 </div>
-
 <script>
   const vscode = acquireVsCodeApi();
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('input');
   const sendBtn    = document.getElementById('send');
-
   function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
-      .replace(/  •/g, '&nbsp;&nbsp;•')
-      .replace(/\\n/g, '<br>');
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>').replace(/  •/g,'&nbsp;&nbsp;•').replace(/\\n/g,'<br>');
   }
-
   function addMessage(text, type, route) {
-    const row = document.createElement('div');
-    row.className = 'msg-row' + (type === 'user' ? ' user' : '');
-
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar ' + (type === 'user' ? 'user' : 'agent');
-    avatar.textContent = type === 'user' ? 'You' : 'DM';
-
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble ' + type;
-    bubble.innerHTML = escapeHtml(text);
-
-    if (route && type === 'agent') {
-      const badge = document.createElement('div');
-      badge.className = 'route-badge';
-      badge.textContent = '→ ' + route;
-      bubble.appendChild(badge);
-    }
-
-    row.appendChild(avatar);
-    row.appendChild(bubble);
-    messagesEl.appendChild(row);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-    return bubble;
+    const row = document.createElement('div'); row.className = 'msg-row' + (type === 'user' ? ' user' : '');
+    const avatar = document.createElement('div'); avatar.className = 'avatar ' + (type === 'user' ? 'user' : 'agent'); avatar.textContent = type === 'user' ? 'You' : 'DM';
+    const bubble = document.createElement('div'); bubble.className = 'bubble ' + type; bubble.innerHTML = escapeHtml(text);
+    if (route && type === 'agent') { const badge = document.createElement('div'); badge.className = 'route-badge'; badge.textContent = '→ ' + route; bubble.appendChild(badge); }
+    row.appendChild(avatar); row.appendChild(bubble); messagesEl.appendChild(row); messagesEl.scrollTop = messagesEl.scrollHeight; return bubble;
   }
-
-  function setInputEnabled(enabled) {
-    inputEl.disabled  = !enabled;
-    sendBtn.disabled  = !enabled;
-  }
-
+  function setInputEnabled(enabled) { inputEl.disabled = !enabled; sendBtn.disabled = !enabled; }
   function sendMessage() {
-    const text = inputEl.value.trim();
-    if (!text) return;
-    addMessage(text, 'user');
-    inputEl.value = '';
-    setInputEnabled(false);
+    const text = inputEl.value.trim(); if (!text) return;
+    addMessage(text, 'user'); inputEl.value = ''; setInputEnabled(false);
     vscode.postMessage({ command: 'send', text });
   }
-
   sendBtn.addEventListener('click', sendMessage);
   inputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) sendMessage(); });
-
   window.addEventListener('message', event => {
     const { command, text, route } = event.data;
-    if (command === 'thinking') {
-      addMessage('Routing your request…', 'agent thinking');
-    } else if (command === 'response') {
-      addMessage(text, 'agent', route);
-      setInputEnabled(true);
-      inputEl.focus();
-    } else if (command === 'info') {
-      addMessage(text, 'agent');
-      setInputEnabled(true);
-      inputEl.focus();
-    } else if (command === 'error') {
-      addMessage(text, 'error');
-      setInputEnabled(true);
-      inputEl.focus();
-    }
+    if (command === 'thinking') { addMessage('Routing your request…', 'agent thinking'); }
+    else if (command === 'response') { addMessage(text, 'agent', route); setInputEnabled(true); inputEl.focus(); }
+    else if (command === 'info') { addMessage(text, 'agent'); setInputEnabled(true); inputEl.focus(); }
+    else if (command === 'error') { addMessage(text, 'error'); setInputEnabled(true); inputEl.focus(); }
   });
 </script>
 </body>
 </html>`;
+}
+
+function escHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildTribalKnowledgeHtml(result: any): string {
+  const sevIcon = (s: string) => (s === 'high' ? '🔴' : s === 'medium' ? '🟡' : '🟢');
+  const warningsHtml = (result.warnings ?? [])
+    .map(
+      (w: any) => `
+    <div class="warning warning--${escHtml(w.severity ?? 'low')}">
+      <div class="warning__header">
+        <span class="sev">${sevIcon(w.severity ?? 'low')} ${escHtml((w.severity ?? 'low').toUpperCase())}</span>
+        <span class="cat">${escHtml(w.category ?? 'other')}</span>
+        ${w.filePath ? `<span class="fp">${escHtml(w.filePath)}</span>` : ''}
+      </div>
+      <p class="warning__msg">${escHtml(w.message ?? '')}</p>
+      ${(w.relatedPRs ?? []).length > 0 ? `<div class="related"><span class="related__lbl">Past PRs:</span>${(w.relatedPRs as any[]).map((pr) => `<a class="pr-link" href="${escHtml(pr.url ?? '#')}">#${pr.prNumber} ${escHtml(pr.prTitle ?? '')}</a>`).join('')}</div>` : ''}
+    </div>`
+    )
+    .join('');
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tribal Knowledge</title>
+<style>*,*::before,*::after{box-sizing:border-box}body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);margin:0;padding:20px;line-height:1.6}.header{display:flex;align-items:center;gap:10px;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--vscode-widget-border)}.header h1{margin:0;font-size:15px;font-weight:600}.meta{margin-left:auto;font-size:11px;color:var(--vscode-descriptionForeground)}.empty{text-align:center;padding:48px 20px;color:var(--vscode-descriptionForeground);font-size:13px}.warning{border-radius:6px;margin-bottom:14px;padding:14px 16px;border:1px solid var(--vscode-widget-border);background:var(--vscode-editorWidget-background)}.warning--high{border-left:3px solid #e74c3c}.warning--medium{border-left:3px solid #f39c12}.warning--low{border-left:3px solid #27ae60}.warning__header{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}.sev{font-size:11px;font-weight:700;letter-spacing:.04em}.cat{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);text-transform:uppercase}.fp{font-size:10px;color:var(--vscode-descriptionForeground);font-family:monospace}.warning__msg{font-size:12.5px;margin:0 0 8px}.related{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}.related__lbl{font-size:10px;color:var(--vscode-descriptionForeground)}.pr-link{font-size:10px;color:var(--vscode-textLink-foreground);text-decoration:none;padding:1px 5px;border-radius:3px;border:1px solid var(--vscode-widget-border)}.pr-link:hover{text-decoration:underline}.status-bar{display:flex;gap:16px;font-size:11px;color:var(--vscode-descriptionForeground);margin-top:16px;padding-top:12px;border-top:1px solid var(--vscode-widget-border)}</style>
+</head><body>
+<div class="header"><span style="font-size:18px">🧠</span><h1>Tribal Knowledge Warnings</h1><div class="meta">${(result.warnings ?? []).length} warning${(result.warnings ?? []).length === 1 ? '' : 's'} · ${escHtml(result.status ?? '')}</div></div>
+${(result.warnings ?? []).length === 0 ? '<div class="empty">✅ No tribal knowledge warnings found for this file.</div>' : warningsHtml}
+<div class="status-bar"><span>Patterns searched: ${result.patternsSearched ?? 0}</span><span>Raw matches: ${result.rawMatchesFound ?? 0}</span><span>Duration: ${result.durationMs ?? 0}ms</span></div>
+<script>const vscode=acquireVsCodeApi();document.querySelectorAll('.pr-link').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();vscode.postMessage({command:'openUrl',url:a.getAttribute('href')});});});</script>
+</body></html>`;
+}
+
+function buildPinnedSourcesHtml(
+  sources: PinnedSource[],
+  quota: {
+    totalEstimatedBytes: number;
+    maxStorageBytes: number;
+    usedPercent: number;
+    activeIndexCount: number;
+    maxActiveIndexes: number;
+    withinQuota: boolean;
+  }
+): string {
+  const fmt = (b: number) =>
+    b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+  const pct = Math.min(quota.usedPercent, 100);
+  const barColor = pct > 80 ? '#e74c3c' : pct > 50 ? '#f39c12' : '#27ae60';
+  const cardsHtml =
+    sources.length === 0
+      ? `<div class="empty"><div class="empty__icon">📌</div><div class="empty__title">No sources pinned</div><div class="empty__body">Pin a URL or PDF to inject authoritative docs into every DevMind response.</div><button class="btn btn--primary" onclick="pin()">+ Pin Documentation</button></div>`
+      : sources
+          .map(
+            (s) =>
+              `<div class="card"><div class="card__icon">${s.sourceType === 'pdf' ? '📄' : '🌐'}</div><div class="card__body"><div class="card__label">${escHtml(s.label)}</div><div class="card__ref">${escHtml(s.sourceRef)}</div><div class="card__meta"><span class="pill">${s.chunkCount} chunks</span><span class="pill">${fmt((s as any).estimatedStorageBytes ?? 0)}</span><span class="pill">weight ${s.priorityWeight}×</span><span class="pill pill--muted">pinned ${new Date(s.pinnedAt).toLocaleString()}</span></div></div><div style="display:flex;gap:6px;flex-shrink:0"><button class="btn btn--primary" onclick="chat('${escHtml(s.id)}','${escHtml(s.label)}')">💬 Chat</button><button class="btn btn--danger" onclick="unpin('${escHtml(s.id)}')">Unpin</button></div></div>`
+          )
+          .join('');
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pinned Sources</title>
+<style>*,*::before,*::after{box-sizing:border-box}body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);margin:0;padding:20px;line-height:1.55}.header{display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--vscode-widget-border)}.header h1{margin:0;font-size:15px;font-weight:600}.header-actions{margin-left:auto}.btn{border:none;border-radius:5px;padding:6px 13px;cursor:pointer;font-size:12px;font-family:inherit;font-weight:500;transition:opacity .15s}.btn:hover{opacity:.85}.btn--primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}.btn--danger{background:var(--vscode-inputValidation-errorBackground);color:var(--vscode-editor-foreground);border:1px solid var(--vscode-inputValidation-errorBorder);font-size:11px;padding:4px 10px}.quota{background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-widget-border);border-radius:7px;padding:12px 16px;margin-bottom:18px}.quota__row{display:flex;justify-content:space-between;font-size:11px;font-weight:600;margin-bottom:6px}.quota__track{height:5px;border-radius:3px;background:var(--vscode-input-background);overflow:hidden}.quota__fill{height:100%;border-radius:3px;background:${barColor};width:${pct}%}.quota__stats{display:flex;gap:16px;margin-top:7px;font-size:10px;color:var(--vscode-descriptionForeground)}.quota__ok{color:${quota.withinQuota ? '#27ae60' : '#e74c3c'};margin-left:auto}.card{display:flex;align-items:flex-start;gap:12px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-widget-border);border-radius:7px;padding:14px 16px;margin-bottom:12px}.card__icon{font-size:20px;flex-shrink:0;margin-top:2px}.card__body{flex:1;min-width:0}.card__label{font-weight:600;font-size:13px;margin-bottom:2px}.card__ref{font-size:10px;color:var(--vscode-descriptionForeground);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:7px}.card__meta{display:flex;flex-wrap:wrap;gap:5px}.pill{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}.pill--muted{background:transparent;border:1px solid var(--vscode-widget-border);color:var(--vscode-descriptionForeground)}.empty{text-align:center;padding:48px 20px;color:var(--vscode-descriptionForeground)}.empty__icon{font-size:36px;margin-bottom:10px}.empty__title{font-size:14px;font-weight:600;margin-bottom:6px;color:var(--vscode-editor-foreground)}.empty__body{font-size:12px;margin-bottom:18px;max-width:320px;margin-left:auto;margin-right:auto}</style>
+</head><body>
+<div class="header"><span style="font-size:18px">📌</span><h1>Pinned Sources</h1><div class="header-actions"><button class="btn btn--primary" onclick="pin()">+ Pin Source</button></div></div>
+<div class="quota"><div class="quota__row"><span>Storage quota</span><span>${pct}% used</span></div><div class="quota__track"><div class="quota__fill"></div></div><div class="quota__stats"><span>${quota.activeIndexCount} / ${quota.maxActiveIndexes} sessions</span><span>${fmt(quota.totalEstimatedBytes)} / ${fmt(quota.maxStorageBytes)}</span><span class="quota__ok">${quota.withinQuota ? '✓ Within quota' : '⚠ Quota exceeded'}</span></div></div>
+${cardsHtml}
+<script>const vscode=acquireVsCodeApi();function pin(){vscode.postMessage({command:'pin'});}function unpin(id){vscode.postMessage({command:'unpin',id});}function chat(id,label){vscode.postMessage({command:'chat',id,label});}</script>
+</body></html>`;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -1367,7 +2036,6 @@ export function activate(context: vscode.ExtensionContext): void {
     toggle
   );
   const crawler = buildDocCrawler(blobService);
-
   const routingAgent = buildRoutingAgent(cosmosService);
 
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -1633,11 +2301,17 @@ export function activate(context: vscode.ExtensionContext): void {
     adapter.showInformationMessage('Hello World from DevMind!');
   });
 
+  let _prWebviewPanel: vscode.WebviewPanel | null = null;
+
   const prPanelAdapter: PRSummaryPanelAdapter = {
     createWebviewPanel(viewType: string, title: string) {
       const p = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Beside, {
         enableScripts: true,
         retainContextWhenHidden: true,
+      });
+      _prWebviewPanel = p;
+      p.onDidDispose(() => {
+        _prWebviewPanel = null;
       });
       return {
         get html() {
@@ -1722,6 +2396,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const summaryAgent = buildPRSummaryAgent();
       const result = await summaryAgent.refreshSummary(owner, repo, prNumber);
+      prSummaryPanel.show();
       prSummaryPanel.showSummary(result.summary);
       vscode.window.showInformationMessage(`DevMind: PR #${prNumber} summary regenerated`);
     } catch (err: any) {
@@ -1735,18 +2410,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   adapter.registerCommand('devmind.testPRSummary.success', () => {
     const testSummaryText =
-      '## Summary\n' +
-      'This PR migrates all `useQuery` calls from the deprecated array syntax to the v5 object syntax across 6 files.\n\n' +
-      '## Changes\n' +
-      '- Updated `useQuery([key], fn)` to `useQuery({ queryKey, queryFn })` in all hooks\n' +
-      '- Removed deprecated `onSuccess` / `onError` callbacks (moved to `useEffect`)\n' +
-      '- Updated `useInfiniteQuery` page param signature\n' +
-      '- Added migration test coverage for v5 patterns\n\n' +
-      '## Impact\n' +
-      'Low risk — purely syntactic migration with no behaviour changes. All existing tests pass.\n\n' +
-      '## Notes\n' +
-      'Linked to #10 (React Query v5 migration epic). Follow-up PR will update `useMutation` calls.';
-
+      '## Summary\nThis PR migrates all `useQuery` calls from the deprecated array syntax to the v5 object syntax across 6 files.\n\n' +
+      '## Changes\n- Updated `useQuery([key], fn)` to `useQuery({ queryKey, queryFn })` in all hooks\n- Removed deprecated `onSuccess` / `onError` callbacks (moved to `useEffect`)\n- Updated `useInfiniteQuery` page param signature\n- Added migration test coverage for v5 patterns\n\n' +
+      '## Impact\nLow risk — purely syntactic migration with no behaviour changes. All existing tests pass.\n\n' +
+      '## Notes\nLinked to #10 (React Query v5 migration epic). Follow-up PR will update `useMutation` calls.';
     prSummaryPanel.showSummary({
       id: 'pr-summary-DhRuva-1509-devmind-76',
       owner: 'DhRuva-1509',
@@ -1786,7 +2453,9 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   });
 
-  function buildPRSummaryAgent(): PRSummaryAgent {
+  function buildPRSummaryAgent(
+    onChunk?: (chunkIndex: number, totalChunks: number, chunkText: string) => void
+  ): PRSummaryAgent {
     const githubToken = process.env.GITHUB_TOKEN ?? '';
     const ghClient = new GitHubMCPClient({ token: githubToken });
 
@@ -1880,13 +2549,22 @@ export function activate(context: vscode.ExtensionContext): void {
         return promptService.renderErrorPrompt(prNumber, prUrl);
       },
     };
-
+    let _chunkCallCount = 0;
+    let _totalChunks = 0;
     const foundryAdapter = {
       async runAgent(_agentId: string, systemPrompt: string, userMessage: string) {
         const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
         const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
         const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
         const start = Date.now();
+
+        const chunkMatch = userMessage.match(/^\[Chunk (\d+)\/(\d+)\]/);
+        const isChunked = !!chunkMatch;
+        if (isChunked) {
+          _chunkCallCount = parseInt(chunkMatch![1], 10);
+          _totalChunks = parseInt(chunkMatch![2], 10);
+        }
+
         const response = await axios.post(
           url,
           {
@@ -1896,13 +2574,59 @@ export function activate(context: vscode.ExtensionContext): void {
             ],
             temperature: 0.3,
             max_tokens: 2000,
+            stream: true,
           },
-          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
+          {
+            headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+            timeout: 60000,
+            responseType: 'stream',
+          }
         );
+
+        let content = '';
+        let tokenCount = 0;
+        let streamBuffer = '';
+
+        await new Promise<void>((resolve, reject) => {
+          response.data.on('data', (chunk: Buffer) => {
+            streamBuffer += chunk.toString();
+            const lines = streamBuffer.split('\n');
+            streamBuffer = lines.pop() ?? '';
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed === 'data: [DONE]') continue;
+              if (!trimmed.startsWith('data: ')) continue;
+              try {
+                const json = JSON.parse(trimmed.slice(6));
+                const delta = json.choices?.[0]?.delta?.content ?? '';
+                if (delta) {
+                  content += delta;
+                  tokenCount++;
+                  // Fire onProgress every ~50 tokens for smooth streaming
+                  if (onChunk && tokenCount % 50 === 0) {
+                    const progressLabel = isChunked
+                      ? `Chunk ${_chunkCallCount}/${_totalChunks} — ${content.length} chars generated…`
+                      : `Generating… ${content.length} chars`;
+                    onChunk(-1, -1, progressLabel); // -1 signals progress-only update
+                  }
+                }
+              } catch {
+                /* malformed SSE line — skip */
+              }
+            }
+          });
+          response.data.on('end', resolve);
+          response.data.on('error', reject);
+        });
+
+        if (isChunked && onChunk) {
+          onChunk(_chunkCallCount, _totalChunks, content);
+        }
+
         return {
           threadId: `direct-${Date.now()}`,
-          content: response.data.choices[0]?.message?.content ?? '',
-          tokenCount: response.data.usage?.total_tokens ?? 0,
+          content,
+          tokenCount,
           durationMs: Date.now() - start,
         };
       },
@@ -1963,7 +2687,6 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.window.showErrorMessage('DevMind: Invalid format. Use owner/repo');
       return;
     }
-
     const prInput = await vscode.window.showInputBox({
       prompt: 'Enter PR number',
       placeHolder: '76',
@@ -1976,10 +2699,44 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     prSummaryPanel.showLoading(prNumber, `${owner}/${repo}`);
+
+    // Patch the loading HTML to handle stream-progress messages.
+    // We append a script that listens for postMessage and updates the
+    // .loading-sub element in place — no full HTML reload needed.
+    if (_prWebviewPanel) {
+      _prWebviewPanel.webview.html = _prWebviewPanel.webview.html.replace(
+        `if (msg.type === 'reload') { location.reload(); }`,
+        `if (msg.type === 'reload') { location.reload(); return; }
+      if (msg.command === 'stream-progress') {
+        var sub = document.querySelector('.loading-sub');
+        if (sub) sub.textContent = msg.text;
+      }`
+      );
+    }
+
     try {
-      const summaryAgent = buildPRSummaryAgent();
+      const summaryAgent = buildPRSummaryAgent((chunkIndex, totalChunks, chunkText) => {
+        if (!_prWebviewPanel) return;
+        if (chunkIndex === -1) {
+          // Token-level progress — update subtitle text in DOM without replacing HTML
+          _prWebviewPanel.webview.postMessage({ command: 'stream-progress', text: chunkText });
+        } else {
+          // Chunk complete for large PRs
+          _prWebviewPanel.webview.postMessage({
+            command: 'stream-progress',
+            text: `Chunk ${chunkIndex}/${totalChunks} complete, processing next…`,
+          });
+        }
+      });
+
       const result = await summaryAgent.generateSummary(owner, repo, prNumber, 'command');
+
+      // Dispose the loading panel and open a fresh one with the summary.
+      // This guarantees the webview renders on first paint regardless of
+      // whether it was in the background during the 20-30s generation.
+      prSummaryPanel.dispose();
       prSummaryPanel.showSummary(result.summary);
+
       if (result.summary.prNumber) {
         const ghClient = new GitHubMCPClient({ token: process.env.GITHUB_TOKEN ?? '' });
         try {
@@ -1996,6 +2753,7 @@ export function activate(context: vscode.ExtensionContext): void {
           /* non-fatal */
         }
       }
+
       vscode.window.showInformationMessage(
         `DevMind: PR #${prNumber} summary generated (${result.fromCache ? 'from cache' : 'fresh'})`
       );
@@ -2045,7 +2803,6 @@ export function activate(context: vscode.ExtensionContext): void {
       context.subscriptions.push(vscode.commands.registerCommand(id, handler));
     },
   };
-
   const conflictPanel = new ConflictExplainerPanel(conflictPanelAdapter);
 
   context.subscriptions.push(
@@ -2185,16 +2942,13 @@ export function activate(context: vscode.ExtensionContext): void {
       context.subscriptions.push(vscode.commands.registerCommand(id, handler));
     },
   };
-
   const nitpickPanel = new NitpickFixerPanel(nitpickPanelAdapter);
 
   adapter.registerCommand(NITPICK_COMMANDS.FIX_NITPICKS, async () => {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-
     nitpickPanel.onRerun(async () => {
       await vscode.commands.executeCommand(NITPICK_COMMANDS.FIX_NITPICKS);
     });
-
     try {
       const { execFile } = await import('child_process');
       const { promisify } = await import('util');
@@ -2313,7 +3067,6 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!accepted) {
         try {
           await execFileAsync('git', ['checkout', '--', '.'], { cwd, timeout: 15000 });
-          // Also remove untracked files that linters created
           const untrackedToDelete = changedFiles
             .filter((l: string) => l.startsWith('??'))
             .map((l: string) => l.slice(3).trim());
@@ -2375,11 +3128,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   adapter.registerCommand('devmind.openChat', async () => {
     let lastActiveEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
-
     const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor) lastActiveEditor = editor;
     });
-
     const chatWebviewPanel = vscode.window.createWebviewPanel(
       'devmind.chat',
       'DevMind Chat',
@@ -2387,29 +3138,22 @@ export function activate(context: vscode.ExtensionContext): void {
       { enableScripts: true, retainContextWhenHidden: true }
     );
     chatWebviewPanel.webview.html = buildChatHtml(routingAgent.buildHelpMessage());
-
     chatWebviewPanel.onDidDispose(() => editorChangeDisposable.dispose());
-
     chatWebviewPanel.webview.onDidReceiveMessage(async (msg: { command: string; text: string }) => {
       if (msg.command !== 'send' || !msg.text?.trim()) return;
-
       const userInput = msg.text.trim();
       chatWebviewPanel.webview.postMessage({ command: 'thinking', text: userInput });
-
       try {
         const activeEditor = lastActiveEditor;
         const fileContext = activeEditor?.document.uri.fsPath;
         const response = await routingAgent.route({ input: userInput, fileContext });
         const { route, isFallback } = response.classification;
-
-        // Reply with routing decision
         chatWebviewPanel.webview.postMessage({
           command: 'response',
           text: response.displayMessage,
           route: isFallback ? undefined : route,
           isFallback,
         });
-
         if (!isFallback) {
           switch (route) {
             case 'version-guard':
@@ -2455,6 +3199,708 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     });
   });
+
+  const ghClientForTribal = new GitHubMCPClient({ token: process.env.GITHUB_TOKEN ?? '' });
+  const prCommentExporter = buildPRCommentExporter(cosmosService, ghClientForTribal);
+  const tribalIndexer = buildTribalKnowledgeIndexer(directSearchIndexClient, getDirectSearchClient);
+  const tribalAgent = buildTribalKnowledgeAgent(tribalIndexer, cosmosService);
+
+  const tempIndexMgr = buildTempIndexManager(
+    directSearchIndexClient,
+    getDirectSearchClient,
+    cosmosService
+  );
+  const dynamicCrawler = buildDynamicDocCrawler(blobService);
+  const liveSourceAgent = buildLiveSourceAgent(tempIndexMgr, dynamicCrawler, statusBarItem);
+
+  adapter.registerCommand('devmind.tribalKnowledge.sync', async () => {
+    const repoInput = await vscode.window.showInputBox({
+      prompt: 'Sync tribal knowledge from which repo? (owner/repo)',
+      value: 'DhRuva-1509/devmind',
+      placeHolder: 'owner/repo',
+    });
+    if (!repoInput?.includes('/')) return;
+    const [owner, repo] = repoInput.trim().split('/');
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `DevMind: Syncing tribal knowledge — ${owner}/${repo}`,
+        cancellable: false,
+      },
+      async (progress) => {
+        try {
+          progress.report({ message: 'Exporting PR comments to Cosmos DB…', increment: 25 });
+          const exportResult = await prCommentExporter.exportComments(owner, repo);
+          if (exportResult.commentsExported === 0 && exportResult.commentsAlreadySynced > 0) {
+            vscode.window.showInformationMessage(
+              `DevMind: Tribal knowledge already up to date for ${owner}/${repo} (${exportResult.commentsAlreadySynced} previously synced).`
+            );
+            return;
+          }
+          if (exportResult.commentsExported === 0) {
+            vscode.window.showInformationMessage(
+              `DevMind: No PR comments found in ${owner}/${repo}.`
+            );
+            return;
+          }
+          progress.report({
+            message: `Collecting ${exportResult.commentsExported} comments for indexing…`,
+            increment: 25,
+          });
+          const inMemoryComments: any[] = [];
+          const memExporter = new PRCommentExporterService(
+            { enableLogging: false, pageSize: 100, maxPages: 50, enableStorage: false },
+            {
+              async listPRs(o: string, r: string, page: number, ps: number) {
+                const all = await ghClientForTribal.listPRs(o, r, 'all');
+                return all
+                  .slice((page - 1) * ps, page * ps)
+                  .map((pr: any) => ({
+                    number: pr.number,
+                    title: pr.title,
+                    state: pr.state,
+                    author: pr.author,
+                    updatedAt: pr.updatedAt,
+                    url: pr.url,
+                  }));
+              },
+              async listPRComments(o: string, r: string, prNumber: number) {
+                const cs = await ghClientForTribal.listPRComments(o, r, prNumber);
+                return cs.map((c: any) => ({
+                  id: c.id,
+                  user: c.author,
+                  body: c.body,
+                  source: 'review' as const,
+                  path: c.path ?? null,
+                  line: c.line ?? null,
+                  createdAt: c.createdAt,
+                  updatedAt: c.updatedAt,
+                }));
+              },
+            } as any,
+            {
+              async upsertComment(comment: any) {
+                inMemoryComments.push(comment);
+              },
+              async readComment() {
+                return null;
+              },
+              async upsertSyncState() {},
+              async readSyncState() {
+                return null;
+              },
+            } as any
+          );
+          await memExporter.exportComments(owner, repo);
+          progress.report({
+            message: `Indexing ${inMemoryComments.length} comments into Azure AI Search…`,
+            increment: 40,
+          });
+          const indexResult = await tribalIndexer.indexComments(owner, repo, inMemoryComments);
+          progress.report({ message: 'Done.', increment: 10 });
+          vscode.window.showInformationMessage(
+            `DevMind: Tribal knowledge synced — ${indexResult.indexed} of ${indexResult.totalComments} comments indexed for ${owner}/${repo}.`
+          );
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`DevMind: Tribal knowledge sync failed — ${err.message}`);
+        }
+      }
+    );
+  });
+
+  adapter.registerCommand('devmind.tribalKnowledge.analyze', async () => {
+    const editor = vscode.window.activeTextEditor;
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+    const repoInput = await vscode.window.showInputBox({
+      prompt: 'Analyze against which repo? (owner/repo)',
+      value: 'DhRuva-1509/devmind',
+      placeHolder: 'owner/repo',
+    });
+    if (!repoInput?.includes('/')) return;
+    const [owner, repo] = repoInput.trim().split('/');
+    const fileContent = editor?.document.getText() ?? '';
+    const changedFile =
+      editor?.document.uri.fsPath?.replace(workspaceRoot, '').replace(/^\//, '') ?? '';
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'DevMind: Analyzing tribal knowledge…',
+        cancellable: false,
+      },
+      async (progress) => {
+        try {
+          progress.report({ message: 'Extracting code patterns…', increment: 30 });
+          const result = await tribalAgent.analyze({
+            owner,
+            repo,
+            trigger: 'manual',
+            changedFiles: changedFile ? [changedFile] : [],
+            codeSnippets: fileContent
+              ? [
+                  {
+                    filePath: changedFile,
+                    content: fileContent.slice(0, 2000),
+                    startLine: 0,
+                    endLine: 0,
+                  },
+                ]
+              : [],
+            detectedPatterns: [],
+            prTitle: `Analysis of ${changedFile || `${owner}/${repo}`}`,
+          });
+          progress.report({
+            message: `Found ${result.warnings.length} warning(s).`,
+            increment: 70,
+          });
+          if (result.warnings.length === 0) {
+            vscode.window.showInformationMessage(
+              'DevMind: No tribal knowledge warnings for this file.'
+            );
+            return;
+          }
+          const tkPanel = vscode.window.createWebviewPanel(
+            'devmind.tribalKnowledge',
+            `Tribal Knowledge — ${changedFile || `${owner}/${repo}`}`,
+            vscode.ViewColumn.Beside,
+            { enableScripts: true }
+          );
+          tkPanel.webview.html = buildTribalKnowledgeHtml(result);
+          tkPanel.webview.onDidReceiveMessage((msg: { command: string; url: string }) => {
+            if (msg.command === 'openUrl' && msg.url)
+              vscode.env.openExternal(vscode.Uri.parse(msg.url));
+          });
+          vscode.window.showInformationMessage(
+            `DevMind: ${result.warnings.length} tribal knowledge warning${result.warnings.length === 1 ? '' : 's'} found.`
+          );
+        } catch (err: any) {
+          vscode.window.showErrorMessage(
+            `DevMind: Tribal knowledge analysis failed — ${err.message}`
+          );
+        }
+      }
+    );
+  });
+
+  adapter.registerCommand('devmind.liveSource.pin', async () => {
+    const choice = await vscode.window.showQuickPick(
+      [
+        { label: '$(globe) URL', description: 'Pin a documentation website', value: 'url' },
+        { label: '$(file-pdf) PDF', description: 'Pin a PDF from disk', value: 'pdf' },
+      ],
+      { placeHolder: 'What type of source do you want to pin?' }
+    );
+    if (!choice) return;
+    if ((choice as any).value === 'url') {
+      const url = await vscode.window.showInputBox({
+        prompt: 'Enter the documentation URL to pin',
+        placeHolder: 'https://docs.nextjs.org/v15',
+        validateInput: (v) => {
+          try {
+            const p = new URL(v);
+            return ['http:', 'https:'].includes(p.protocol) ? null : 'Must be http or https';
+          } catch {
+            return 'Enter a valid URL';
+          }
+        },
+      });
+      if (!url) return;
+      let defaultLabel = '';
+      try {
+        defaultLabel = new URL(url).hostname;
+      } catch {
+        /* ignore */
+      }
+      const label = await vscode.window.showInputBox({
+        prompt: 'Optional: give this source a label',
+        placeHolder: defaultLabel,
+        value: '',
+      });
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `DevMind: Pinning ${label || defaultLabel}…`,
+          cancellable: false,
+        },
+        async (progress) => {
+          try {
+            const result = await liveSourceAgent.pinSource(
+              { type: 'url', url, label: label || undefined },
+              { report: (msg, inc) => progress.report({ message: msg, increment: inc }) }
+            );
+            vscode.window.showInformationMessage(
+              `DevMind: 📌 "${result.source.label}" pinned — ${result.chunksIndexed} chunks, ${result.pagesCrawled} page(s).`
+            );
+          } catch (err: any) {
+            vscode.window.showErrorMessage(`DevMind: Failed to pin source — ${err.message}`);
+          }
+        }
+      );
+    } else {
+      const uris = await vscode.window.showOpenDialog({
+        canSelectMany: false,
+        canSelectFolders: false,
+        filters: { 'PDF Files': ['pdf'] },
+        openLabel: 'Pin this PDF',
+      });
+      if (!uris?.length) return;
+      const filename = path.basename(uris[0].fsPath);
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `DevMind: Pinning ${filename}…`,
+          cancellable: false,
+        },
+        async (progress) => {
+          try {
+            const { readFile } = await import('fs/promises');
+            const buffer = await readFile(uris[0].fsPath);
+            const result = await liveSourceAgent.pinSource(
+              { type: 'pdf', buffer, filename },
+              { report: (msg, inc) => progress.report({ message: msg, increment: inc }) }
+            );
+            vscode.window.showInformationMessage(
+              `DevMind: 📌 "${result.source.label}" pinned — ${result.chunksIndexed} chunks indexed.`
+            );
+          } catch (err: any) {
+            vscode.window.showErrorMessage(`DevMind: Failed to pin PDF — ${err.message}`);
+          }
+        }
+      );
+    }
+  });
+
+  adapter.registerCommand('devmind.liveSource.unpin', async () => {
+    const active = await liveSourceAgent.listPinnedSources();
+    if (active.length === 0) {
+      vscode.window.showInformationMessage('DevMind: No sources are currently pinned.');
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      active.map((s) => ({
+        label: `$(pin) ${s.label}`,
+        description: `${s.chunkCount} chunks · pinned ${new Date(s.pinnedAt).toLocaleString()}`,
+        id: s.id,
+      })),
+      { placeHolder: 'Select a source to unpin' }
+    );
+    if (!picked) return;
+    await liveSourceAgent.unpinSource((picked as any).id);
+    vscode.window.showInformationMessage(
+      `DevMind: "${picked.label.replace('$(pin) ', '')}" unpinned.`
+    );
+  });
+
+  adapter.registerCommand('devmind.liveSource.list', async () => {
+    const active = await liveSourceAgent.listPinnedSources();
+    const quotaStatus = await tempIndexMgr.getQuotaStatus();
+    const lsPanel = vscode.window.createWebviewPanel(
+      'devmind.liveSource',
+      'DevMind: Pinned Sources',
+      vscode.ViewColumn.Beside,
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+    lsPanel.webview.html = buildPinnedSourcesHtml(active, quotaStatus);
+    lsPanel.webview.onDidReceiveMessage(
+      async (msg: { command: string; id?: string; label?: string }) => {
+        if (msg.command === 'unpin' && msg.id) {
+          await liveSourceAgent.unpinSource(msg.id);
+          lsPanel.webview.html = buildPinnedSourcesHtml(
+            await liveSourceAgent.listPinnedSources(),
+            await tempIndexMgr.getQuotaStatus()
+          );
+          vscode.window.showInformationMessage('DevMind: Source unpinned.');
+        } else if (msg.command === 'pin') {
+          await vscode.commands.executeCommand('devmind.liveSource.pin');
+          setTimeout(async () => {
+            if (!lsPanel.visible) return;
+            lsPanel.webview.html = buildPinnedSourcesHtml(
+              await liveSourceAgent.listPinnedSources(),
+              await tempIndexMgr.getQuotaStatus()
+            );
+          }, 600);
+        } else if (msg.command === 'chat' && msg.id && msg.label) {
+          openPinnedSourceChat(msg.id, msg.label);
+        }
+      }
+    );
+  });
+
+  function openPinnedSourceChat(sourceId: string, sourceLabel: string): void {
+    const chatPanel = vscode.window.createWebviewPanel(
+      'devmind.pinnedSourceChat',
+      `💬 ${sourceLabel}`,
+      vscode.ViewColumn.One,
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+
+    const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+
+    chatPanel.webview.html = buildPinnedSourceChatHtml(sourceLabel, []);
+
+    chatPanel.webview.onDidReceiveMessage(async (msg: { command: string; text: string }) => {
+      if (msg.command !== 'send' || !msg.text?.trim()) return;
+
+      const userQuestion = msg.text.trim();
+      history.push({ role: 'user', content: userQuestion });
+      chatPanel.webview.postMessage({ command: 'thinking' });
+
+      try {
+        // Step 1: embed the question
+        const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? '';
+        const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
+        const embedUrl = `${endpoint}openai/deployments/text-embedding-3-small/embeddings?api-version=2024-02-01`;
+        const embedRes = await axios.post(
+          embedUrl,
+          { input: [userQuestion] },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 15000 }
+        );
+        const vector: number[] = embedRes.data.data[0]?.embedding ?? [];
+
+        // Step 2: search the pinned source index directly in Azure AI Search.
+        // TempIndexManager creates indexes with a 'tmp-' prefix. We try the source
+        // ID directly first, then scan all tmp- indexes if that fails.
+        let context = '';
+        const tryIndexNames = [
+          `tmp-${sourceId}`,
+          sourceId, // in case the agent stored the full index name as the ID
+        ];
+
+        let foundClient: any = null;
+        for (const idxName of tryIndexNames) {
+          const c = getDirectSearchClient(idxName);
+          if (c) {
+            try {
+              // Probe with a minimal search to verify the index exists
+              const probe = await c.search('*', { top: 1 });
+              for await (const _ of probe.results) {
+                break;
+              }
+              foundClient = c;
+              break;
+            } catch {
+              /* index doesn't exist under this name */
+            }
+          }
+        }
+
+        // If neither worked, scan all tmp- indexes and pick the most recent one
+        if (!foundClient && directSearchIndexClient) {
+          try {
+            for await (const idx of directSearchIndexClient.listIndexes()) {
+              if (idx.name.startsWith('tmp-')) {
+                const c = getDirectSearchClient(idx.name);
+                if (c) {
+                  foundClient = c;
+                  break;
+                }
+              }
+            }
+          } catch {
+            /* non-fatal */
+          }
+        }
+
+        if (foundClient) {
+          try {
+            const searchOpts: any = { top: 5, select: ['content', 'sourceRef'] };
+            if (vector.length > 0) {
+              searchOpts.vectorSearchOptions = {
+                queries: [
+                  { kind: 'vector', vector, kNearestNeighborsCount: 5, fields: ['vector'] },
+                ],
+              };
+            }
+            const iter = await foundClient.search(userQuestion || '*', searchOpts);
+            const chunks: string[] = [];
+            for await (const r of iter.results) {
+              chunks.push((r.document as any).content ?? '');
+            }
+            context = chunks.filter(Boolean).join('\n\n---\n\n');
+          } catch (searchErr: any) {
+            console.log(`[DevMind] Pinned source search failed: ${searchErr.message}`);
+          }
+        }
+
+        // Step 3: ask GPT-4o with the retrieved context
+        const systemPrompt = context
+          ? `You are a helpful assistant answering questions about "${sourceLabel}". ` +
+            `Use the following documentation excerpts as your primary source of truth.\n\n` +
+            `## Documentation\n\n${context}`
+          : `You are a helpful assistant answering questions about "${sourceLabel}".`;
+
+        const chatUrl = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          ...history.map((h) => ({ role: h.role, content: h.content })),
+        ];
+
+        const chatRes = await axios.post(
+          chatUrl,
+          { messages, temperature: 0.3, max_tokens: 1000 },
+          { headers: { 'api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 60000 }
+        );
+
+        const answer = chatRes.data.choices[0]?.message?.content ?? 'No response received.';
+        history.push({ role: 'assistant', content: answer });
+
+        chatPanel.webview.postMessage({
+          command: 'response',
+          text: answer,
+          grounded: context.length > 0,
+        });
+      } catch (err: any) {
+        chatPanel.webview.postMessage({
+          command: 'error',
+          text: `Error: ${err.message ?? String(err)}`,
+        });
+      }
+    });
+  }
+
+  function buildPinnedSourceChatHtml(sourceLabel: string, _history: unknown[]): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chat — ${sourceLabel}</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body{font-family:var(--vscode-font-family);font-size:13px;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);margin:0;padding:0;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* ── Header ── */
+#header{padding:14px 20px;border-bottom:1px solid var(--vscode-widget-border);background:var(--vscode-editorWidget-background);flex-shrink:0;display:flex;align-items:center;gap:10px}
+#header .icon{font-size:18px}
+#header .info{}
+#header h1{margin:0;font-size:13px;font-weight:600;line-height:1.3}
+#header .sub{font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px}
+
+/* ── Messages ── */
+#messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+#messages::-webkit-scrollbar{width:4px}
+#messages::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background);border-radius:2px}
+
+/* ── Welcome ── */
+.welcome{text-align:center;padding:40px 20px;color:var(--vscode-descriptionForeground);margin:auto}
+.welcome .icon{font-size:40px;margin-bottom:12px}
+.welcome .title{font-size:15px;font-weight:600;color:var(--vscode-editor-foreground);margin-bottom:8px}
+.welcome .sub{font-size:12.5px;max-width:380px;margin:0 auto;line-height:1.6}
+.suggestions{display:flex;flex-direction:column;gap:6px;margin-top:20px;max-width:380px;margin-left:auto;margin-right:auto}
+.suggestion{background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-widget-border);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;text-align:left;color:var(--vscode-editor-foreground);transition:background 0.15s}
+.suggestion:hover{background:var(--vscode-list-hoverBackground)}
+
+/* ── Message rows ── */
+.msg{display:flex;gap:10px;align-items:flex-start;animation:fadeIn 0.2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{flex-direction:row-reverse}
+.avatar{width:30px;height:30px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:2px}
+.avatar.doc{background:linear-gradient(135deg,#0e70c0,#005a9e);color:#fff}
+.avatar.user{background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}
+
+/* ── Bubbles ── */
+.bubble{max-width:82%;padding:11px 15px;border-radius:10px;line-height:1.65;font-size:12.5px;word-break:break-word}
+.bubble.doc{background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-widget-border);border-top-left-radius:2px}
+.bubble.user{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-top-right-radius:2px}
+.bubble.error{background:var(--vscode-inputValidation-errorBackground);border:1px solid var(--vscode-inputValidation-errorBorder);color:var(--vscode-inputValidation-errorForeground)}
+.bubble.thinking{opacity:0.6;font-style:italic;font-size:12px}
+
+/* ── Markdown rendering ── */
+.bubble h1,.bubble h2,.bubble h3{margin:12px 0 6px;font-weight:600;line-height:1.3}
+.bubble h1{font-size:14px;border-bottom:1px solid var(--vscode-widget-border);padding-bottom:4px}
+.bubble h2{font-size:13px;border-bottom:1px solid var(--vscode-widget-border);padding-bottom:3px}
+.bubble h3{font-size:12.5px}
+.bubble h1:first-child,.bubble h2:first-child,.bubble h3:first-child{margin-top:0}
+.bubble p{margin:6px 0}
+.bubble p:first-child{margin-top:0}
+.bubble p:last-child{margin-bottom:0}
+.bubble ul,.bubble ol{margin:6px 0;padding-left:20px}
+.bubble li{margin:3px 0;line-height:1.6}
+.bubble code{font-family:var(--vscode-editor-font-family,'Menlo,Monaco,monospace');font-size:11.5px;background:var(--vscode-textCodeBlock-background,rgba(128,128,128,0.15));padding:1px 5px;border-radius:3px}
+.bubble pre{background:var(--vscode-textCodeBlock-background,rgba(128,128,128,0.1));border:1px solid var(--vscode-widget-border);border-radius:6px;padding:10px 12px;overflow-x:auto;margin:8px 0}
+.bubble pre code{background:none;padding:0;font-size:11.5px;line-height:1.55}
+.bubble strong{font-weight:600}
+.bubble em{font-style:italic}
+.bubble blockquote{border-left:3px solid var(--vscode-textBlockQuote-border,#007acc);margin:8px 0;padding:4px 10px;color:var(--vscode-descriptionForeground);font-style:italic}
+.bubble hr{border:none;border-top:1px solid var(--vscode-widget-border);margin:10px 0}
+.bubble a{color:var(--vscode-textLink-foreground);text-decoration:none}
+.bubble a:hover{text-decoration:underline}
+
+/* ── Source badge ── */
+.source-badge{font-size:10px;color:var(--vscode-descriptionForeground);margin-top:6px;display:flex;align-items:center;gap:4px;opacity:0.8}
+.source-dot{width:6px;height:6px;border-radius:50%;background:#27ae60;flex-shrink:0}
+
+/* ── Input area ── */
+#input-area{flex-shrink:0;border-top:1px solid var(--vscode-widget-border);padding:12px 20px 14px;background:var(--vscode-editorWidget-background)}
+#input-row{display:flex;gap:8px;align-items:flex-end}
+#input{flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);border-radius:8px;padding:9px 13px;font-size:12.5px;font-family:inherit;outline:none;resize:none;min-height:40px;max-height:120px;line-height:1.5;transition:border-color 0.15s}
+#input:focus{border-color:var(--vscode-focusBorder)}
+#input::placeholder{color:var(--vscode-input-placeholderForeground)}
+#send{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:12.5px;font-family:inherit;white-space:nowrap;height:40px;transition:background 0.15s}
+#send:hover{background:var(--vscode-button-hoverBackground)}
+#send:disabled{opacity:0.45;cursor:not-allowed}
+#hint{margin-top:6px;font-size:10.5px;color:var(--vscode-descriptionForeground)}
+</style>
+</head>
+<body>
+<div id="header">
+  <div class="icon">📄</div>
+  <div class="info">
+    <h1>${sourceLabel}</h1>
+    <div class="sub">Answers grounded in indexed documentation · powered by GPT-4o</div>
+  </div>
+</div>
+
+<div id="messages">
+  <div class="welcome">
+    <div class="icon">💬</div>
+    <div class="title">Ask anything about ${sourceLabel}</div>
+    <div class="sub">Your questions are answered using the content indexed from this source, with GPT-4o filling in any gaps.</div>
+    <div class="suggestions">
+      <button class="suggestion" onclick="suggest(this)">What does this documentation cover?</button>
+      <button class="suggestion" onclick="suggest(this)">Give me a quick summary of the key concepts</button>
+      <button class="suggestion" onclick="suggest(this)">What are the most important things to know?</button>
+    </div>
+  </div>
+</div>
+
+<div id="input-area">
+  <div id="input-row">
+    <textarea id="input" rows="1" placeholder="Ask a question about ${sourceLabel}…"></textarea>
+    <button id="send">Send ↵</button>
+  </div>
+  <div id="hint">Press <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line</div>
+</div>
+
+<script>
+const vscode = acquireVsCodeApi();
+const messagesEl = document.getElementById('messages');
+const inputEl    = document.getElementById('input');
+const sendBtn    = document.getElementById('send');
+
+// ── Simple markdown renderer ──────────────────────────────────────────────
+function renderMarkdown(text) {
+  let html = text
+    // Escape HTML first
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    // Code blocks (must come before inline code)
+    .replace(/\`\`\`(\\w*)\\n?([\\s\\S]*?)\`\`\`/g, (_,lang,code) =>
+      '<pre><code>' + code.trim() + '</code></pre>')
+    // Inline code
+    .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+    // Headers
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,  '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm,   '<h1>$1</h1>')
+    // Bold & italic
+    .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+    .replace(/\\*(.+?)\\*/g, '<em>$1</em>')
+    // Horizontal rule
+    .replace(/^---$/gm, '<hr>')
+    // Blockquotes
+    .replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>')
+    // Unordered lists
+    .replace(/^[\\*\\-] (.+)$/gm, '<li>$1</li>')
+    // Ordered lists
+    .replace(/^\\d+\\. (.+)$/gm, '<li>$1</li>')
+    // Wrap consecutive <li> in <ul>
+    .replace(/(<li>.*<\\/li>\\n?)+/g, m => '<ul>' + m + '</ul>')
+    // Paragraphs — wrap lines not already in a block tag
+    .replace(/^(?!<[hupobli]|$)(.+)$/gm, '<p>$1</p>')
+    // Links
+    .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank">$1</a>')
+    // Clean up double newlines between block elements
+    .replace(/\\n{2,}/g, '\\n');
+  return html;
+}
+
+function addMessage(text, type, grounded) {
+  const welcome = messagesEl.querySelector('.welcome');
+  if (welcome) welcome.remove();
+
+  const msg = document.createElement('div');
+  msg.className = 'msg' + (type === 'user' ? ' user' : '');
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ' + (type === 'user' ? 'user' : 'doc');
+  avatar.textContent = type === 'user' ? 'You' : 'AI';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;max-width:82%';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + type;
+
+  if (type === 'doc' && type !== 'thinking') {
+    bubble.innerHTML = renderMarkdown(text);
+  } else {
+    bubble.textContent = text;
+  }
+
+  wrap.appendChild(bubble);
+
+  if (type === 'doc' && grounded) {
+    const badge = document.createElement('div');
+    badge.className = 'source-badge';
+    badge.innerHTML = '<div class="source-dot"></div> Grounded in indexed documentation';
+    wrap.appendChild(badge);
+  }
+
+  msg.appendChild(avatar);
+  msg.appendChild(wrap);
+  messagesEl.appendChild(msg);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return bubble;
+}
+
+function setEnabled(enabled) {
+  inputEl.disabled = !enabled;
+  sendBtn.disabled = !enabled;
+  if (enabled) inputEl.focus();
+}
+
+function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  addMessage(text, 'user', false);
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  setEnabled(false);
+  vscode.postMessage({ command: 'send', text });
+}
+
+function suggest(btn) {
+  inputEl.value = btn.textContent;
+  sendMessage();
+}
+
+sendBtn.addEventListener('click', sendMessage);
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+});
+
+let thinkingEl = null;
+window.addEventListener('message', event => {
+  const msg = event.data;
+  if (msg.command === 'thinking') {
+    thinkingEl = addMessage('Searching documentation and generating answer…', 'thinking', false);
+  } else if (msg.command === 'response') {
+    if (thinkingEl) { thinkingEl.closest('.msg').remove(); thinkingEl = null; }
+    addMessage(msg.text, 'doc', msg.grounded);
+    setEnabled(true);
+  } else if (msg.command === 'error') {
+    if (thinkingEl) { thinkingEl.closest('.msg').remove(); thinkingEl = null; }
+    addMessage(msg.text, 'error', false);
+    setEnabled(true);
+  }
+});
+</script>
+</body>
+</html>`;
+  }
 
   console.log(
     `DevMind: activated — ${registry.getRegisteredCommands().length} commands registered ✓`

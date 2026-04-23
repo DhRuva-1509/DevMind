@@ -23,7 +23,12 @@
     "onCommand:devmind.openChat",
     "onCommand:devmind.explainConflicts",
     "onCommand:devmind.explainConflict",
-    "onCommand:devmind.fixNitpicks"
+    "onCommand:devmind.fixNitpicks",
+    "onCommand:devmind.tribalKnowledge.sync",
+    "onCommand:devmind.tribalKnowledge.analyze",
+    "onCommand:devmind.liveSource.pin",
+    "onCommand:devmind.liveSource.unpin",
+    "onCommand:devmind.liveSource.list"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -104,6 +109,31 @@
         "command": "devmind.fixNitpicks",
         "title": "DevMind: Fix Nitpicks",
         "icon": "$(wrench)"
+      },
+      {
+        "command": "devmind.tribalKnowledge.sync",
+        "title": "DevMind: Sync Tribal Knowledge",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "devmind.tribalKnowledge.analyze",
+        "title": "DevMind: Analyze Tribal Knowledge",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "devmind.liveSource.pin",
+        "title": "DevMind: Pin Documentation",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "devmind.liveSource.unpin",
+        "title": "DevMind: Unpin Documentation",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "devmind.liveSource.list",
+        "title": "DevMind: Show Pinned Sources",
+        "icon": "$(book)"
       }
     ],
     "configuration": {
@@ -185,6 +215,18 @@
         "command": "devmind.fixNitpicks",
         "key": "ctrl+shift+n",
         "mac": "cmd+shift+n",
+        "when": "editorFocus"
+      },
+      {
+        "command": "devmind.tribalKnowledge.sync",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k",
+        "when": "editorFocus"
+      },
+      {
+        "command": "devmind.liveSource.pin",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i",
         "when": "editorFocus"
       }
     ]
