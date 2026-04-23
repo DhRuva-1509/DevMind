@@ -10,6 +10,9 @@ param environment string
 @description('Azure region for all resources')
 param location string
 
+@description('Azure region for AI Search')
+param searchLocation string = location
+
 @description('Base name for all resources')
 param baseName string
 
@@ -91,15 +94,15 @@ module openAi 'modules/openai.bicep' = {
       {
         name: 'gpt-4o'
         modelName: 'gpt-4o'
-        version: '2024-08-06'
+        version: '2024-11-20'
         capacity: gpt4oCapacity
       }
-      {
-        name: 'gpt-4o-mini'
-        modelName: 'gpt-4o-mini'
-        version: '2024-07-18'
-        capacity: gpt4oMiniCapacity
-      }
+      // {
+      //   name: 'gpt-4o-mini'
+      //   modelName: 'gpt-4o-mini'
+      //   version: '2024-11-20'
+      //   capacity: gpt4oMiniCapacity
+      // }
       {
         name: 'text-embedding-3-small'
         modelName: 'text-embedding-3-small'
@@ -114,7 +117,7 @@ module search 'modules/ai-search.bicep' = {
   name: 'search'
   params: {
     name: searchName
-    location: location
+    location: searchLocation
     tags: tags
     sku: searchSku
     replicaCount: searchReplicaCount
