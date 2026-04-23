@@ -2301,6 +2301,8 @@ export function activate(context: vscode.ExtensionContext): void {
     adapter.showInformationMessage('Hello World from DevMind!');
   });
 
+  // Capture the underlying vscode.WebviewPanel so we can postMessage
+  // streaming updates directly without replacing the entire HTML.
   let _prWebviewPanel: vscode.WebviewPanel | null = null;
 
   const prPanelAdapter: PRSummaryPanelAdapter = {
@@ -2549,6 +2551,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return promptService.renderErrorPrompt(prNumber, prUrl);
       },
     };
+
+    // ── Streaming foundry adapter ─────────────────────────────────────────────
+    // Detects chunk messages (userMessage starts with "[Chunk N/Total]") and
+    // fires onChunk() immediately after each runAgent() call completes so the
+    // panel can show partial content without waiting for all chunks.
     let _chunkCallCount = 0;
     let _totalChunks = 0;
     const foundryAdapter = {
@@ -2558,6 +2565,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const url = `${endpoint}openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01`;
         const start = Date.now();
 
+        // Detect chunked calls from PRSummaryAgent.generateChunkedSummary
         const chunkMatch = userMessage.match(/^\[Chunk (\d+)\/(\d+)\]/);
         const isChunked = !!chunkMatch;
         if (isChunked) {
@@ -2565,6 +2573,7 @@ export function activate(context: vscode.ExtensionContext): void {
           _totalChunks = parseInt(chunkMatch![2], 10);
         }
 
+        // Use SSE streaming so tokens appear as they are generated
         const response = await axios.post(
           url,
           {
@@ -2619,6 +2628,7 @@ export function activate(context: vscode.ExtensionContext): void {
           response.data.on('error', reject);
         });
 
+        // Fire chunk-complete callback for chunked PRs
         if (isChunked && onChunk) {
           onChunk(_chunkCallCount, _totalChunks, content);
         }
@@ -2698,6 +2708,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
+    // Show loading panel immediately
     prSummaryPanel.showLoading(prNumber, `${owner}/${repo}`);
 
     // Patch the loading HTML to handle stream-progress messages.
@@ -2846,13 +2857,29 @@ export function activate(context: vscode.ExtensionContext): void {
 
   adapter.registerCommand(CONFLICT_COMMANDS.EXPLAIN_FILE, async (...args: unknown[]) => {
     const uri = args[0] as string | undefined;
-    const doc = vscode.window.activeTextEditor?.document;
-    if (!doc) {
-      vscode.window.showWarningMessage('DevMind: No active file.');
-      return;
+
+    // Prefer the URI passed by CodeLens. Fall back to active editor.
+    // If neither is available, scan visible editors as a last resort.
+    let filePath: string;
+    let content: string;
+
+    if (uri) {
+      filePath = uri;
+      const vsUri = vscode.Uri.parse(uri);
+      const doc =
+        vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri) ??
+        (await vscode.workspace.openTextDocument(vsUri));
+      content = doc.getText();
+    } else {
+      const doc =
+        vscode.window.activeTextEditor?.document ?? vscode.window.visibleTextEditors[0]?.document;
+      if (!doc) {
+        vscode.window.showWarningMessage('DevMind: No active file.');
+        return;
+      }
+      filePath = doc.uri.toString();
+      content = doc.getText();
     }
-    const filePath = uri ?? doc.uri.toString();
-    const content = doc.getText();
     const { context: parseCtx, hasConflicts } = conflictParser.parse(filePath, content);
     if (!hasConflicts) {
       vscode.window.showInformationMessage('DevMind: No merge conflicts found in this file.');
@@ -2876,6 +2903,10 @@ export function activate(context: vscode.ExtensionContext): void {
         filePath,
       }));
       displays.forEach((d) => conflictHover.storeExplanation(filePath, d));
+      // Dispose the loading panel and open a fresh one with explanations.
+      // Same fix as PR Summary — prevents blank panel when webview was backgrounded
+      // during the 20-30s GPT-4o analysis.
+      conflictPanel.dispose();
       conflictPanel.showExplanations(filePath, displays);
       const statusMsg =
         result.status === 'complete'
@@ -2905,6 +2936,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const idx = (conflictPanel as any).state?.currentIndex;
     conflictPanel.navigateTo((typeof idx === 'number' ? idx : 0) - 1);
   });
+
+  // ── Nitpick Fixer ─────────────────────────────────────────────────────────
 
   const nitpickPanelAdapter: NitpickPanelAdapter = {
     createWebviewPanel(viewType: string, title: string): NitpickPanelWebviewPanel {
@@ -3525,6 +3558,8 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   });
 
+  // ── Pinned Source Chat Window ─────────────────────────────────────────────
+
   function openPinnedSourceChat(sourceId: string, sourceLabel: string): void {
     const chatPanel = vscode.window.createWebviewPanel(
       'devmind.pinnedSourceChat',
@@ -3906,7 +3941,6 @@ window.addEventListener('message', event => {
     `DevMind: activated — ${registry.getRegisteredCommands().length} commands registered ✓`
   );
 }
-
 function buildEmptyState(projectId: string): WebviewState {
   return {
     projectId,
