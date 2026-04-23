@@ -2,7 +2,7 @@
 param name string
 
 @description('Azure Region for the OpenAI resource')
-param location string 
+param location string
 
 @description('Resource tags')
 param tags object = {}
@@ -35,7 +35,7 @@ resource modelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2024
   parent: openAiAccount
   name: deployment.name
   sku: {
-    name: 'Standard'
+    name: 'GlobalStandard'
     capacity: deployment.capacity
   }
   properties: {
