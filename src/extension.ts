@@ -1586,11 +1586,19 @@ function buildDynamicDocCrawler(blobService: BlobStorageService): DynamicDocCraw
   const pdfAdapter = {
     async parse(buffer: Buffer): Promise<string> {
       try {
-        const pdfParse = require('pdf-parse');
+        // pdf-parse v2 changed exports — handle both v1 (default) and v2 (named)
+        const pdfParseModule = require('pdf-parse');
+        const pdfParse = pdfParseModule.default ?? pdfParseModule;
         const result = await pdfParse(buffer);
-        return result.text ?? '';
-      } catch {
-        return '';
+        const text = result.text ?? '';
+        console.log(`[DevMind] PDF parsed: ${text.length} chars, ${result.numpages} pages`);
+        if (!text.trim()) {
+          throw new Error('PDF appears to be empty or contains only images (no extractable text).');
+        }
+        return text;
+      } catch (e: any) {
+        console.error(`[DevMind] PDF parse error:`, e);
+        throw new Error(`PDF parsing failed: ${e.message}`);
       }
     },
   };
@@ -1616,8 +1624,9 @@ function buildDynamicDocCrawler(blobService: BlobStorageService): DynamicDocCraw
 function buildLiveSourceAgent(
   tempIndexManager: TempIndexManager,
   dynamicCrawler: DynamicDocCrawlerService,
-  statusBarItem: vscode.StatusBarItem
-): LiveSourceAgent {
+  statusBarItem: vscode.StatusBarItem,
+  extContext: vscode.ExtensionContext
+): { agent: LiveSourceAgent; getIndexName: (sourceId: string) => string | undefined } {
   const crawlerAdapter = {
     async crawlUrl(url: string, _opts: { depth: number; maxPages: number }) {
       const result = await dynamicCrawler.crawl({ type: 'url', url });
@@ -1641,10 +1650,25 @@ function buildLiveSourceAgent(
     },
   };
 
+  // sessionId → indexName map captured at createSession time
+  // This is the only moment the index name is known — we store it immediately.
+  const _sessionIndexMap = new Map<string, string>(
+    Object.entries(
+      extContext.globalState.get<Record<string, string>>('devmind.sessionIndexMap') ?? {}
+    )
+  );
+
   const indexAdapter = {
     async createSession(sessionId: string, label: string) {
       const res = await tempIndexManager.createIndex({ sessionId, sourceLabel: label });
-      return { sessionId: res.record.sessionId, indexName: res.record.indexName };
+      const indexName = res.record.indexName;
+      // Persist the mapping so it survives extension reloads
+      _sessionIndexMap.set(sessionId, indexName);
+      await extContext.globalState.update(
+        'devmind.sessionIndexMap',
+        Object.fromEntries(_sessionIndexMap)
+      );
+      return { sessionId: res.record.sessionId, indexName };
     },
     async upsertChunks(sessionId: string, chunks: any[]) {
       const res = await tempIndexManager.upsertChunks({ sessionId, chunks });
@@ -1685,8 +1709,12 @@ function buildLiveSourceAgent(
   const stateAdapter = {
     async save(sources: PinnedSource[]) {
       _pinnedSources = sources;
+      await extContext.globalState.update('devmind.pinnedSources', sources);
     },
     async load() {
+      if (_pinnedSources.length === 0) {
+        _pinnedSources = extContext.globalState.get<PinnedSource[]>('devmind.pinnedSources') ?? [];
+      }
       return _pinnedSources;
     },
   };
@@ -1709,7 +1737,7 @@ function buildLiveSourceAgent(
     },
   };
 
-  return new LiveSourceAgent(
+  const agentInstance = new LiveSourceAgent(
     { maxPinnedSources: 5, priorityWeight: 1.5, crawlDepth: 2, maxPages: 20, enableLogging: true },
     crawlerAdapter as any,
     indexAdapter as any,
@@ -1717,6 +1745,11 @@ function buildLiveSourceAgent(
     stateAdapter as any,
     statusBarAdapter as any
   );
+
+  return {
+    agent: agentInstance,
+    getIndexName: (sourceId: string): string | undefined => _sessionIndexMap.get(sourceId),
+  };
 }
 
 const LIBRARY_DOCS: Record<string, { url: string; description: string }> = {
@@ -1991,6 +2024,10 @@ ${cardsHtml}
 <script>const vscode=acquireVsCodeApi();function pin(){vscode.postMessage({command:'pin'});}function unpin(id){vscode.postMessage({command:'unpin',id});}function chat(id,label){vscode.postMessage({command:'chat',id,label});}</script>
 </body></html>`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// activate
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext): void {
   console.log('DevMind: activating...');
@@ -2299,8 +2336,6 @@ export function activate(context: vscode.ExtensionContext): void {
     adapter.showInformationMessage('Hello World from DevMind!');
   });
 
-  // Capture the underlying vscode.WebviewPanel so we can postMessage
-  // streaming updates directly without replacing the entire HTML.
   let _prWebviewPanel: vscode.WebviewPanel | null = null;
 
   const prPanelAdapter: PRSummaryPanelAdapter = {
@@ -2550,10 +2585,6 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     };
 
-    // ── Streaming foundry adapter ─────────────────────────────────────────────
-    // Detects chunk messages (userMessage starts with "[Chunk N/Total]") and
-    // fires onChunk() immediately after each runAgent() call completes so the
-    // panel can show partial content without waiting for all chunks.
     let _chunkCallCount = 0;
     let _totalChunks = 0;
     const foundryAdapter = {
@@ -2706,12 +2737,8 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    // Show loading panel immediately
     prSummaryPanel.showLoading(prNumber, `${owner}/${repo}`);
 
-    // Patch the loading HTML to handle stream-progress messages.
-    // We append a script that listens for postMessage and updates the
-    // .loading-sub element in place — no full HTML reload needed.
     if (_prWebviewPanel) {
       _prWebviewPanel.webview.html = _prWebviewPanel.webview.html.replace(
         `if (msg.type === 'reload') { location.reload(); }`,
@@ -2740,9 +2767,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const result = await summaryAgent.generateSummary(owner, repo, prNumber, 'command');
 
-      // Dispose the loading panel and open a fresh one with the summary.
-      // This guarantees the webview renders on first paint regardless of
-      // whether it was in the background during the 20-30s generation.
       prSummaryPanel.dispose();
       prSummaryPanel.showSummary(result.summary);
 
@@ -3157,6 +3181,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // ── Chat (Routing Agent) ──────────────────────────────────────────────────
+
   adapter.registerCommand('devmind.openChat', async () => {
     let lastActiveEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
     const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -3242,7 +3268,14 @@ export function activate(context: vscode.ExtensionContext): void {
     cosmosService
   );
   const dynamicCrawler = buildDynamicDocCrawler(blobService);
-  const liveSourceAgent = buildLiveSourceAgent(tempIndexMgr, dynamicCrawler, statusBarItem);
+  const { agent: liveSourceAgent, getIndexName: getLiveSourceIndexName } = buildLiveSourceAgent(
+    tempIndexMgr,
+    dynamicCrawler,
+    statusBarItem,
+    context
+  );
+
+  // pinnedSourceIndexMap is now handled inside buildLiveSourceAgent via _sessionIndexMap
 
   adapter.registerCommand('devmind.tribalKnowledge.sync', async () => {
     const repoInput = await vscode.window.showInputBox({
@@ -3454,7 +3487,10 @@ export function activate(context: vscode.ExtensionContext): void {
           try {
             const result = await liveSourceAgent.pinSource(
               { type: 'url', url, label: label || undefined },
-              { report: (msg, inc) => progress.report({ message: msg, increment: inc }) }
+              {
+                report: (msg: string, inc: number) =>
+                  progress.report({ message: msg, increment: inc }),
+              }
             );
             vscode.window.showInformationMessage(
               `DevMind: 📌 "${result.source.label}" pinned — ${result.chunksIndexed} chunks, ${result.pagesCrawled} page(s).`
@@ -3485,7 +3521,10 @@ export function activate(context: vscode.ExtensionContext): void {
             const buffer = await readFile(uris[0].fsPath);
             const result = await liveSourceAgent.pinSource(
               { type: 'pdf', buffer, filename },
-              { report: (msg, inc) => progress.report({ message: msg, increment: inc }) }
+              {
+                report: (msg: string, inc: number) =>
+                  progress.report({ message: msg, increment: inc }),
+              }
             );
             vscode.window.showInformationMessage(
               `DevMind: 📌 "${result.source.label}" pinned — ${result.chunksIndexed} chunks indexed.`
@@ -3515,7 +3554,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!picked) return;
     await liveSourceAgent.unpinSource((picked as any).id);
     vscode.window.showInformationMessage(
-      `DevMind: "${picked.label.replace('$(pin) ', '')}" unpinned.`
+      `DevMind: "${((picked as any).label as string).replace('$(pin) ', '')}" unpinned.`
     );
   });
 
@@ -3548,15 +3587,17 @@ export function activate(context: vscode.ExtensionContext): void {
             );
           }, 600);
         } else if (msg.command === 'chat' && msg.id && msg.label) {
-          openPinnedSourceChat(msg.id, msg.label);
+          openPinnedSourceChat(msg.id, msg.label, getLiveSourceIndexName);
         }
       }
     );
   });
 
-  // ── Pinned Source Chat Window ─────────────────────────────────────────────
-
-  function openPinnedSourceChat(sourceId: string, sourceLabel: string): void {
+  function openPinnedSourceChat(
+    sourceId: string,
+    sourceLabel: string,
+    getIndexName: (id: string) => string | undefined
+  ): void {
     const chatPanel = vscode.window.createWebviewPanel(
       'devmind.pinnedSourceChat',
       `💬 ${sourceLabel}`,
@@ -3588,43 +3629,62 @@ export function activate(context: vscode.ExtensionContext): void {
         const vector: number[] = embedRes.data.data[0]?.embedding ?? [];
 
         // Step 2: search the pinned source index directly in Azure AI Search.
-        // TempIndexManager creates indexes with a 'tmp-' prefix. We try the source
-        // ID directly first, then scan all tmp- indexes if that fails.
+        // Use stored index name first, then probe by sourceRef content to find the right index.
         let context = '';
-        const tryIndexNames = [
-          `tmp-${sourceId}`,
-          sourceId, // in case the agent stored the full index name as the ID
-        ];
-
+        const knownIndexName = getIndexName(sourceId);
         let foundClient: any = null;
-        for (const idxName of tryIndexNames) {
-          const c = getDirectSearchClient(idxName);
+        let foundIndexName: string | null = knownIndexName ?? null;
+
+        // Try known index name first
+        if (knownIndexName) {
+          const c = getDirectSearchClient(knownIndexName);
           if (c) {
             try {
-              // Probe with a minimal search to verify the index exists
               const probe = await c.search('*', { top: 1 });
               for await (const _ of probe.results) {
                 break;
               }
               foundClient = c;
-              break;
+              console.log(`[DevMind] Chat using stored index: ${knownIndexName}`);
             } catch {
-              /* index doesn't exist under this name */
+              foundClient = null;
             }
           }
         }
 
-        // If neither worked, scan all tmp- indexes and pick the most recent one
+        // If stored name didn't work, scan all tmp- indexes and find the one
+        // whose documents match this source by checking sourceRef content
         if (!foundClient && directSearchIndexClient) {
           try {
+            const allTmpIndexes: string[] = [];
             for await (const idx of directSearchIndexClient.listIndexes()) {
-              if (idx.name.startsWith('tmp-')) {
-                const c = getDirectSearchClient(idx.name);
-                if (c) {
-                  foundClient = c;
-                  break;
+              if (idx.name.startsWith('tmp-')) allTmpIndexes.push(idx.name);
+            }
+            // Check each index to find the one containing this source's content
+            for (const idxName of allTmpIndexes) {
+              const c = getDirectSearchClient(idxName);
+              if (!c) continue;
+              try {
+                // Search for any doc and check its sourceRef matches our source
+                const probe = await c.search('*', { top: 1, select: ['sourceRef'] });
+                for await (const r of probe.results) {
+                  const ref: string = (r.document as any).sourceRef ?? '';
+                  // Match by label (PDF filename) or URL hostname
+                  if (
+                    ref === sourceLabel ||
+                    ref.includes(sourceLabel) ||
+                    sourceLabel.includes(ref.split('/')[2] ?? '')
+                  ) {
+                    foundClient = c;
+                    foundIndexName = idxName;
+                    console.log(`[DevMind] Chat found index by sourceRef: ${idxName} (${ref})`);
+                    break;
+                  }
                 }
+              } catch {
+                /* skip */
               }
+              if (foundClient) break;
             }
           } catch {
             /* non-fatal */
@@ -3937,6 +3997,7 @@ window.addEventListener('message', event => {
     `DevMind: activated — ${registry.getRegisteredCommands().length} commands registered ✓`
   );
 }
+
 function buildEmptyState(projectId: string): WebviewState {
   return {
     projectId,
