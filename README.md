@@ -89,8 +89,8 @@ A unified chat panel (`Cmd+Shift+D`) accepts natural language questions and auto
 | Layer | Technology |
 |---|---|
 | Editor | VS Code Extension API (TypeScript) |
-| Language model | Azure OpenAI — GPT-4o, GPT-4o-mini |
-| Embeddings | Azure OpenAI — text-embedding-ada-002 |
+| Language model | Azure OpenAI — GPT-4o |
+| Embeddings | Azure OpenAI — text-embedding-3-small |
 | Vector search | Azure AI Search |
 | Agent orchestration | Azure AI Foundry (Agent Service) |
 | Database / cache | Azure Cosmos DB (NoSQL) |
@@ -174,6 +174,8 @@ bash deploy.sh
 ```
 
 The Bicep templates in `infra/modules/` create all required Azure resources. Edit `infra/parameters/dev.bicepparam` to set your resource names, SKUs, and capacity values before deploying.
+
+> **Note:** Azure AI Search can be deployed to a different region than your other resources (useful when capacity is constrained). Set the `searchLocation` parameter in `dev.bicepparam` to override the region for AI Search independently of the main `location` parameter.
 
 ### 4. Configure environment variables
 
