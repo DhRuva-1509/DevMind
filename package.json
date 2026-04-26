@@ -250,6 +250,7 @@
     "@types/dotenv": "^6.1.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.19.15",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/sinon": "^21.0.0",
@@ -285,6 +286,7 @@
     "domhandler": "^5.0.3",
     "dotenv": "^17.3.1",
     "openai": "^6.25.0",
+    "pdf-parse": "^1.1.1",
     "tiktoken": "^1.0.22"
   }
 }
