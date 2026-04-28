@@ -326,11 +326,9 @@ User message
                   (help message shown)
 ```
 
-**Possible routes:** `version-guard` · `pr-summary` · `conflict-explainer` · `nitpick-fixer` · `unknown`
+**Possible routes:** `version-guard` · `pr-summary` · `conflict-explainer` · `nitpick-fixer` · `live-source-agent` · `unknown`
 
 The classifier is intentionally narrow — it uses at most 50 output tokens and returns raw JSON. A confidence threshold of 0.5 (configurable) prevents low-certainty classifications from triggering the wrong agent; anything below falls through to a friendly help message listing all available commands with examples.
-
-Every routing decision is logged to Cosmos DB with the input text, chosen route, confidence score, and latency, giving full observability into misroutes.
 
 ---
 
