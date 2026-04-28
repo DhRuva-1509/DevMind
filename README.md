@@ -13,6 +13,7 @@
 - [Dependencies](#dependencies)
 - [Installation and Setup](#installation-and-setup)
 - [Project Structure](#project-structure)
+- [Agent AI Design Patterns](#agent-ai-design-patterns)
 - [User Manual](#user-manual)
 - [Acknowledgement](#acknowledgement)
 
@@ -294,6 +295,90 @@ devmind/
 
 ---
 
+## Agent AI Design Patterns
+
+DevMind is built around two foundational agentic design patterns. Understanding them helps explain why the system behaves the way it does and how its agents stay accurate under varied conditions.
+
+---
+
+### Routing Pattern — Chat Interface
+
+**Where:** `src/services/routing/routing.agent.service.ts`
+
+The chat panel accepts unconstrained natural language input. Rather than hard-coding keyword triggers, DevMind feeds every message to a lightweight GPT-4o classifier that outputs a structured route label and a confidence score.
+
+```
+User message
+     │
+     ▼
+┌─────────────────────────┐
+│   LLM Classifier        │  ← GPT-4o, system prompt listing 5 routes
+│   (single LLM call)     │
+└────────────┬────────────┘
+             │  { route, confidence }
+             ▼
+     confidence ≥ 0.5?
+      ┌──────┴──────┐
+     Yes            No
+      │              │
+      ▼              ▼
+ Dispatch agent   "unknown" fallback
+                  (help message shown)
+```
+
+**Possible routes:** `version-guard` · `pr-summary` · `conflict-explainer` · `nitpick-fixer` · `unknown`
+
+The classifier is intentionally narrow — it uses at most 50 output tokens and returns raw JSON. A confidence threshold of 0.5 (configurable) prevents low-certainty classifications from triggering the wrong agent; anything below falls through to a friendly help message listing all available commands with examples.
+
+Every routing decision is logged to Cosmos DB with the input text, chosen route, confidence score, and latency, giving full observability into misroutes.
+
+---
+
+### Reflection Pattern — PR Summarizer
+
+**Where:** `src/services/pr-context/pr.context.reflection.service.ts`
+
+Extracting useful context from a large pull request is a noisy operation — diffs can be enormous, commits sparse, and pattern detection unreliable on the first pass. The PR context service wraps extraction in a reflection loop that validates the output against a set of quality checks and retries with tighter constraints if any check fails.
+
+```
+              extractFn(tokenBudget)
+                      │
+                      ▼
+           ┌──────────────────────┐
+           │  Quality Checks      │
+           │  1. Token budget     │  ← total tokens ≤ budget
+           │  2. Field presence   │  ← files, diffs, commits non-empty
+           │  3. Pattern coverage │  ← ≥ 1 code pattern detected
+           └──────────┬───────────┘
+                      │
+              All checks pass?
+              ┌────────┴────────┐
+             Yes               No
+              │                 │
+              ▼                 ▼
+         Return context    Retries left?
+                           ┌─────┴──────┐
+                          Yes           No
+                           │             │
+                           ▼             ▼
+                   budget × 0.75    Return best-effort
+                   → retry          (qualityFlag: 'degraded')
+```
+
+**Retry budget progression (default 2 retries):**
+
+| Attempt | Token budget |
+|---------|-------------|
+| 1       | 6,000       |
+| 2       | 4,500       |
+| 3       | 3,375       |
+
+Progressively shrinking the budget forces the extractor to be more selective on each retry, pruning noise rather than simply re-running the same extraction. If all attempts are exhausted, the service returns the last result with a `qualityFlag: 'degraded'` marker and logs the failure reasons to Cosmos DB — the summarizer still runs, just with reduced context.
+
+This pattern is also used by the **Conflict Explainer** (`src/services/conflict-explainer/conflict.explainer.agent.ts`), where the validation errors from one LLM attempt are fed back into the next prompt as explicit feedback, allowing the model to self-correct its explanation before the result is shown to you.
+
+---
+
 ## User Manual
 
 ### Version Guard
@@ -346,20 +431,21 @@ To see all indexed libraries, run **DevMind: Show Indexed Libraries** or press t
 
 ---
 
-### Tribal Knowledge
+### Tribal Knowledge Agent
 
-**Purpose:** Surfaces relevant feedback from past pull requests as contextual warnings when you write code.
+**Purpose:** Indexes all important decisions, architecture decisions, and tribal knowledge embedded across your GitHub repository's PR review comments into Azure AI Search. When you open a PR or change a file, it searches that index for past decisions and context that are semantically similar to your current changes and surfaces them as contextual warnings — so critical knowledge that lives only in old PR threads never gets lost or repeated. Warnings link back to the original PR so you can read the full discussion.
 
 **Sync the knowledge base first:**
 
 1. Press `Cmd+Shift+K` (Windows: `Ctrl+Shift+K`) or run **DevMind: Sync Tribal Knowledge**.
-2. DevMind fetches all review comments from your GitHub repository and indexes them in Azure AI Search.
+2. DevMind fetches all important decisions, architecture decisions, and tribal knowledge from your GitHub repository's PR review comments and indexes them in Azure AI Search.
 
 **Analyze current code:**
 
 1. Run **DevMind: Analyze Tribal Knowledge** from the Command Palette.
-2. DevMind searches the index for comments semantically similar to your current changes.
-3. Matching warnings appear in the Problems panel, each linking to the original PR thread.
+2. DevMind searches the index for past decisions and context semantically similar to your current changes.
+3. Matching warnings appear in the Problems panel, each linking back to the original PR thread for the full discussion.
+4. Tune the sensitivity threshold to control how aggressively past knowledge is surfaced.
 
 ---
 
@@ -405,6 +491,10 @@ To see all indexed libraries, run **DevMind: Show Indexed Libraries** or press t
 ## Acknowledgement
 
 DevMind was designed and built by **Dhruva Patil**.
+
+### Special Thanks
+
+A heartfelt thank you to **Dr. Tushar Sharma**, this project was built under his supervision, and his guidance and support throughout were invaluable.
 
 The project builds on the following platforms and open-source projects:
 
